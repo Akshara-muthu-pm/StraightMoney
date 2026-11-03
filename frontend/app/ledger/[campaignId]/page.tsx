@@ -27,9 +27,9 @@ export default function LedgerPage() {
   }, [id]);
 
   const total = (type: string, status: string) => entries.filter((item) => item.type === type && item.status === status).reduce((sum, item) => sum + item.amount, 0);
-  return <main className="mx-auto max-w-6xl px-5 py-10">
-    <p className="text-sm font-semibold uppercase tracking-[0.2em] text-emerald-700">Public record</p>
-    <div className="mt-2 mb-8 flex flex-wrap items-end justify-between gap-4"><div><h1 className="text-4xl font-bold">Transparency ledger</h1><p className="mt-2 text-slate-600">{campaign?.title ?? "Campaign"} · donations in and vendor payouts out</p></div><Link href="/" className="text-sm font-semibold text-emerald-700 hover:underline">← Back to campaign</Link></div>
+  return <main id="main-content" tabIndex={-1} className="mx-auto max-w-6xl px-5 py-10">
+    <p className="text-sm font-semibold uppercase tracking-[0.2em] text-brand-700">Public record</p>
+    <div className="mt-2 mb-8 flex flex-wrap items-end justify-between gap-4"><div><h1 className="text-4xl font-bold">Transparency ledger</h1><p className="mt-2 text-slate-600">{campaign?.title ?? "Campaign"} · donations in and vendor payouts out</p></div><Link href="/" className="text-sm font-semibold text-brand-700 hover:underline">← Back to campaign</Link></div>
     {!Number.isInteger(id) || id < 1 ? <p role="alert" className="rounded bg-red-50 p-4 text-red-900">Invalid campaign ID.</p> : null}
     {loading && <p role="status">Loading ledger…</p>}
     {error && <p role="alert" className="rounded bg-red-50 p-4 text-red-900">{error}</p>}

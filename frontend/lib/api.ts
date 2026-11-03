@@ -37,7 +37,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   listCampaigns: async (): Promise<CampaignSummary[]> => USE_MOCKS ? [mockCampaign] : request<CampaignSummary[]>("/campaigns"),
-  getCampaign: async (id: number): Promise<Campaign> => USE_MOCKS ? mockCampaign : request<Campaign>(`/campaigns/${id}`),
+  getCampaign: async (id: number): Promise<Campaign> => USE_MOCKS ? id === mockCampaign.id ? mockCampaign : Promise.reject(new Error("Campaign not found in demo data.")) : request<Campaign>(`/campaigns/${id}`),
   getInvoices: async (campaignId?: number, status?: string): Promise<Invoice[]> => {
     if (USE_MOCKS) return mockInvoices.filter((invoice) => (campaignId === undefined || invoice.campaign_id === campaignId) && (!status || invoice.status === status));
     const query = new URLSearchParams();
