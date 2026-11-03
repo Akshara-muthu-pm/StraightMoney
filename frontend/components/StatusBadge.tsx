@@ -1,9 +1,9 @@
 import type { CampaignStatus, InvoiceStatus } from "@/lib/types";
 
 const colors: Record<string, string> = {
-  active: "bg-emerald-50 text-emerald-800 ring-emerald-200",
+  active: "bg-brand-50 text-brand-800 ring-brand-200",
   AWAITING_VERIFIER: "bg-amber-50 text-amber-800 ring-amber-200",
-  PAID: "bg-emerald-50 text-emerald-800 ring-emerald-200",
+  PAID: "bg-brand-50 text-brand-800 ring-brand-200",
   REJECTED: "bg-rose-50 text-rose-800 ring-rose-200",
   VERIFIER_REJECTED: "bg-rose-50 text-rose-800 ring-rose-200",
   NEEDS_REVIEW: "bg-amber-50 text-amber-800 ring-amber-200",
