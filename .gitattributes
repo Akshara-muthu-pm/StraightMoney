@@ -1,0 +1,2 @@
+sample_invoices/*.pdf -text -diff
+sample_invoices/*.jpg -text -diff
