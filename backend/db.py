@@ -38,6 +38,6 @@ def init_db() -> None:
     if engine.dialect.name == "postgresql":
         migration_dir = Path(__file__).resolve().parent / "migrations"
         with engine.begin() as connection:
-            for name in ("001_donation_capture_status.sql", "002_donation_source.sql"):
+            for name in ("001_donation_capture_status.sql", "002_donation_source.sql", "003_invoice_document_hash.sql"):
                 connection.execute(text((migration_dir / name).read_text(encoding="utf-8")))
 

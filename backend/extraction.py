@@ -18,11 +18,14 @@ import httpx
 
 from config import settings
 from schemas import ExtractionResult
+from starlette.concurrency import run_in_threadpool
 
 
 def _get_client() -> genai.Client:
     """Return an authenticated GenAI client instance."""
-    api_key = settings.llm_api_key or os.environ.get("GEMINI_API_KEY") or ""
+    api_key = settings.llm_api_key
+    if not api_key or api_key.startswith("your-"):
+        api_key = os.environ.get("GEMINI_API_KEY", "")
     return genai.Client(api_key=api_key, http_options=types.HttpOptions(
         timeout=60000, retry_options=types.HttpRetryOptions(attempts=1)
     ))
@@ -124,21 +127,31 @@ async def _extract_from_image(file_path: str, mime_type: str, model: Optional[st
 
 def _heuristic_extract(text: str, file_path: str) -> ExtractionResult:
     """Fallback extraction when LLM API key is not configured in .env."""
-    amt_match = re.search(r"\$\s*([0-9]+(?:\.[0-9]{2})?)", text)
-    amount = float(amt_match.group(1)) if amt_match else 400.0
+    amt_match = re.search(
+        r"(?im)^\s*(?:grand\s+total|total(?:\s+due)?|amount\s+due)\s*[:\-]?\s*"
+        r"[$€£]?\s*([0-9]+(?:,[0-9]{3})*(?:\.[0-9]{1,2})?)(?=\s|$)\s*([A-Z]{3})?", text)
+    amount = float(amt_match.group(1).replace(",", "")) if amt_match else 0.0
+    currency_match = re.search(r"(?im)^\s*currency\s*:\s*([A-Z]{3})\s*$", text)
+    currency = ((amt_match.group(2) if amt_match else None)
+                or (currency_match.group(1) if currency_match else ""))
 
-    inv_match = re.search(r"(?:invoice|inv)\s*(?:#|no\.?|number)?\s*[:\-]?\s*([A-Za-z0-9\-]+)", text, re.I)
-    inv_num = inv_match.group(1) if inv_match else Path(file_path).stem
+    inv_match = re.search(
+        r"(?im)^\s*(?:invoice|inv)\s*(?:number|no\.?|#)\s*[:\-]?\s*([A-Za-z0-9][A-Za-z0-9._/-]*)\s*$", text)
+    inv_num = inv_match.group(1) if inv_match else ""
 
-    email_match = re.search(r"[\w\.-]+@[\w\.-]+\.\w+", text)
-    email = email_match.group(0) if email_match else ""
+    email_match = re.search(
+        r"(?im)^\s*(?:payout email|payee email|paypal email)\s*:\s*([^\s@]+@[^\s@]+\.[^\s@]+)\s*$", text)
+    email = email_match.group(1) if email_match else ""
+
+    if not amount or not inv_num or not email or not currency:
+        raise ExtractionError("Invoice total, currency, number and payout email must be readable; no values were guessed.")
 
     return ExtractionResult(
         vendor_name="Demo Vendor",
         payout_email=email,
         invoice_number=inv_num,
         amount=amount,
-        currency="USD",
+        currency=currency.upper(),
         description=text[:200].strip() or "Delivered materials",
         line_items=[{"description": "Delivery item", "amount": amount}],
     )
@@ -157,16 +170,22 @@ async def extract_invoice(file_path: str, file_mime: str) -> ExtractionResult:
     the raw bytes are sent to the vision API.  On a parse failure the call
     is retried once before raising ExtractionError.
     """
-    if not settings.llm_api_key or settings.llm_api_key.startswith("your-"):
-        # Heuristic fallback for demo without configured API key
-        pages_text = ""
-        if file_mime == "application/pdf":
-            try:
-                with pdfplumber.open(file_path) as pdf:
-                    pages_text = "\n".join(page.extract_text() or "" for page in pdf.pages)
-            except Exception:
-                pass
-        return _heuristic_extract(pages_text or Path(file_path).stem, file_path)
+    def pdf_text() -> str:
+        with pdfplumber.open(file_path) as pdf:
+            return "\n".join(page.extract_text() or "" for page in pdf.pages)
+
+    api_key = settings.llm_api_key
+    if not api_key or api_key.startswith("your-"):
+        api_key = os.environ.get("GEMINI_API_KEY", "")
+    if not api_key or api_key.startswith("your-"):
+        if file_mime != "application/pdf":
+            raise ExtractionError("Image extraction requires a configured Gemini key.")
+        try:
+            return _heuristic_extract(await run_in_threadpool(pdf_text), file_path)
+        except ExtractionError:
+            raise
+        except Exception as exc:
+            raise ExtractionError("PDF could not be read.") from exc
 
     last_error: Optional[Exception] = None
 
@@ -174,10 +193,7 @@ async def extract_invoice(file_path: str, file_mime: str) -> ExtractionResult:
     for attempt in range(2):  # try up to twice
         try:
             if file_mime == "application/pdf":
-                with pdfplumber.open(file_path) as pdf:
-                    pages_text = "\n".join(
-                        page.extract_text() or "" for page in pdf.pages
-                    )
+                pages_text = await run_in_threadpool(pdf_text)
                 if not pages_text.strip():
                     raise ExtractionError(
                         "PDF contains no extractable text. Scanned PDFs are not supported."

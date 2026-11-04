@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import hashlib
 import math
+from decimal import Decimal
 import secrets
 import os
-import shutil
+import tempfile
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -30,15 +32,17 @@ from fastapi import (
     status,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 
 import audit
 import advisory as advisory_module
 import extraction as extraction_module
 from config import settings
-from db import get_db, init_db
+from db import get_db, init_db, SessionLocal
 from models import (
+    StoredFile,
     PayoutInstallment,
     BudgetLine,
     Campaign,
@@ -68,6 +72,8 @@ from schemas import (
     VerificationOut,
 )
 from seed import seed_demo_data
+from uploads import read_upload, validate_content, file_response
+from guards import UploadSizeLimit
 
 # ---------------------------------------------------------------------------
 # App bootstrap
@@ -79,6 +85,7 @@ app = FastAPI(
     description="Transparent fundraising with AI-assisted invoice verification.",
 )
 
+app.add_middleware(UploadSizeLimit)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_url, "http://localhost:3000", "http://localhost:5173"],
@@ -88,8 +95,49 @@ app.add_middleware(
 )
 
 
-os.makedirs(settings.upload_dir, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=settings.upload_dir), name="uploads")
+@app.middleware("http")
+async def protect_requests(request, call_next):
+    if request.method == "POST":
+        try:
+            length = request.headers.get("content-length")
+            if length is not None and int(length) > settings.max_upload_bytes * 2 + 65536:
+                raise HTTPException(413, "Request exceeds upload limit.")
+        except ValueError:
+            return file_response_error(400, "Invalid Content-Length.")
+        except HTTPException as exc:
+            from fastapi.responses import JSONResponse
+            return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
+
+
+def file_response_error(code, message):
+    from fastapi.responses import JSONResponse
+    return JSONResponse({"detail": message}, status_code=code)
+
+
+@app.get("/files/{file_id}/{filename}")
+@app.get("/api/files/{file_id}/{filename}")
+@app.get("/files/{file_id}")
+@app.get("/api/files/{file_id}")
+def get_stored_file(file_id: int, filename: str | None = None, db: Session = Depends(get_db)):
+    stored = _get_or_404(db, StoredFile, file_id)
+    return file_response(stored.data, stored.mime_type)
+
+
+@app.get("/uploads/{filename}")
+@app.get("/api/uploads/{filename}")
+async def get_legacy_file(filename: str):
+    root = Path(settings.upload_dir).resolve()
+    path = (root / filename).resolve()
+    if path.parent != root or not path.is_file() or path.stat().st_size > settings.max_upload_bytes:
+        raise HTTPException(404, "File not found.")
+    data = await run_in_threadpool(path.read_bytes)
+    mime, _ = await run_in_threadpool(validate_content, data)
+    return file_response(data, mime)
+
 
 router = APIRouter()
 
@@ -117,7 +165,11 @@ def root_info():
 
 @app.get("/health", tags=["Info"])
 @app.get("/api/health", tags=["Info"])
-def health_check():
+def health_check(db: Session = Depends(get_db)):
+    try:
+        db.execute(text("SELECT 1"))
+    except Exception as exc:
+        raise HTTPException(503, "Database is unavailable.") from exc
     return {"status": "ok", "app": "StraightMoney"}
 
 
@@ -125,7 +177,7 @@ def health_check():
 async def on_startup() -> None:
     """Initialise the database and seed demo data on first boot."""
     init_db()
-    db = next(get_db())
+    db = SessionLocal()
     try:
         seed_demo_data(db)
     finally:
@@ -138,17 +190,8 @@ async def on_startup() -> None:
 
 paypal = PayPalClient()
 
-_ALLOWED_MIME_TYPES = {
-    "application/pdf",
-    "image/jpeg",
-    "image/jpg",
-    "image/png",
-    "image/webp",
-}
-
-
 def require_verifier_key(x_verifier_key: str | None = Header(default=None, alias="X-Verifier-Key")) -> None:
-    if not settings.verifier_key or not x_verifier_key or not secrets.compare_digest(x_verifier_key, settings.verifier_key):
+    if not settings.verifier_key or not x_verifier_key or not secrets.compare_digest(x_verifier_key.encode(), settings.verifier_key.encode()):
         raise HTTPException(status_code=401, detail="Invalid verifier key.")
 
 
@@ -169,6 +212,40 @@ def _get_or_404(db: Session, model, entity_id: int):
     if obj is None:
         raise HTTPException(status_code=404, detail=f"{model.__name__} {entity_id} not found.")
     return obj
+
+
+def _locked_invoice(db: Session, invoice_id: int) -> Invoice:
+    initial = _get_or_404(db, Invoice, invoice_id)
+    db.query(Campaign).filter_by(id=initial.campaign_id).with_for_update().populate_existing().one()
+    return db.query(Invoice).filter_by(id=invoice_id).with_for_update().populate_existing().one()
+
+
+def _recheck_approval(db: Session, invoice: Invoice) -> None:
+    campaign, line, vendor = invoice.campaign, invoice.budget_line, invoice.vendor
+    db.refresh(line)
+    others = db.query(Invoice).filter(Invoice.campaign_id == campaign.id, Invoice.id != invoice.id).all()
+    committed = sum(other.remaining_amount for other in others
+                    if other.budget_line_id == line.id and other.status != "PAID"
+                    and any(v.decision in {"approve", "test_override"} for v in other.verifications))
+    proof = any(file.kind == "proof" for file in invoice.files)
+    if not proof and invoice.evidence_path and invoice.evidence_path != invoice.raw_file_path:
+        path = Path(settings.upload_dir) / Path(invoice.evidence_path).name
+        try:
+            if path.stat().st_size <= settings.max_upload_bytes:
+                validate_content(path.read_bytes(), proof=True)
+                proof = True
+        except (OSError, HTTPException):
+            pass
+    checks = run_policy_checks({"amount": invoice.amount, "committed_amount": committed,
+        "document_hash": invoice.document_hash,
+        "invoice_number": invoice.invoice_number, "payout_email": invoice.payout_email,
+        "currency": invoice.currency, "proof_file_attached": proof}, campaign, line, vendor,
+        [other for other in others if other.id < invoice.id])
+    failures = [check.detail for check in checks if not check.passed and check.severity == "hard"]
+    if line.campaign_id != campaign.id or vendor.campaign_id != campaign.id:
+        failures.append("Vendor and budget line must belong to this campaign.")
+    if failures:
+        raise HTTPException(409, "Approval checks failed: " + "; ".join(failures))
 
 
 # ---------------------------------------------------------------------------
@@ -204,6 +281,8 @@ def create_campaign(payload: CampaignCreate, db: Session = Depends(get_db)):
 
     for bl in payload.budget_lines:
         vendor_id = bl.vendor_id
+        if vendor_id is not None and vendor_id not in {vendor.id for vendor in vendor_by_email.values()}:
+            raise HTTPException(422, "Vendor must belong to the newly created campaign.")
         if not vendor_id and bl.vendor_name and bl.vendor_payout_email:
             email_key = bl.vendor_payout_email.strip().lower()
             if email_key not in vendor_by_email:
@@ -337,6 +416,8 @@ def _paypal_capture_status(capture_data: dict) -> str:
 
 def _store_capture_result(db: Session, order_id: str, capture_data: dict) -> tuple[Donation, Campaign | None, bool]:
     """Store the PayPal result and credit a completed capture once."""
+    initial = db.query(Donation).filter_by(paypal_order_id=order_id).one()
+    db.query(Campaign).filter_by(id=initial.campaign_id).with_for_update().populate_existing().one()
     donation = (db.query(Donation).filter_by(paypal_order_id=order_id)
                 .with_for_update().populate_existing().one())
     if donation.status == "captured":
@@ -346,13 +427,34 @@ def _store_capture_result(db: Session, order_id: str, capture_data: dict) -> tup
     donation.paypal_capture_status = capture_status
     campaign = None
     credited = capture_status == "COMPLETED"
+    if credited and donation.source != "simulated":
+        try:
+            capture = capture_data["purchase_units"][0]["payments"]["captures"][0]
+            amount = capture["amount"]
+            if (Decimal(amount["value"]) != Decimal(str(donation.amount))
+                    or amount["currency_code"] != donation.currency
+                    or capture_data.get("id") != order_id
+                    or capture_data.get("simulated")):
+                raise ValueError("Capture does not match this donation.")
+        except (KeyError, IndexError, TypeError, ValueError, ArithmeticError) as exc:
+            db.rollback()
+            raise HTTPException(502, "PayPal capture amount, currency or order did not match; no funds were credited.") from exc
     if credited:
         campaign = (db.query(Campaign).filter_by(id=donation.campaign_id)
                     .with_for_update().populate_existing().one())
-        campaign.pool_balance += donation.amount
+        campaign.pool_balance = round(campaign.pool_balance + donation.amount, 2)
         donation.status = "captured"
     else:
-        donation.status = "pending" if capture_status == "PENDING" else "failed"
+        donation.status = "pending" if capture_status in {"PENDING", "UNKNOWN"} else "failed"
+    audit.log(
+        db,
+        actor=donation.donor_name,
+        action=f"donation.{donation.status}",
+        campaign_id=donation.campaign_id,
+        commit=False,
+        detail={"amount": donation.amount, "paypal_capture_status": donation.paypal_capture_status,
+                "new_pool_balance": campaign.pool_balance if campaign else None},
+    )
     db.commit()
     db.refresh(donation)
     return donation, campaign, credited
@@ -390,12 +492,17 @@ async def capture_donation(order_id: str, db: Session = Depends(get_db)):
         if not paypal.is_configured:
             raise HTTPException(status_code=503, detail="PayPal Sandbox checkout is not configured.")
         try:
-            capture_data = (await paypal.get_order(order_id) if donation.status == "pending"
-                            else await paypal.capture_order(order_id))
+            capture_data = await paypal.get_order(order_id)
+            if donation.status != "pending" and _paypal_capture_status(capture_data) == "UNKNOWN":
+                capture_data = await paypal.capture_order(order_id)
         except PayPalError as exc:
             body_str = json.dumps(exc.body) if isinstance(exc.body, (dict, list)) else str(exc.body)
-            if "ORDER_NOT_APPROVED" in body_str:
-                import asyncio
+            if "ORDER_ALREADY_CAPTURED" in body_str:
+                try:
+                    capture_data = await paypal.get_order(order_id)
+                except PayPalError as error:
+                    raise HTTPException(502, "Unable to reconcile PayPal capture; check status before donating again.") from error
+            elif "ORDER_NOT_APPROVED" in body_str:
                 await asyncio.sleep(1.0)
                 try:
                     capture_data = await paypal.capture_order(order_id)
@@ -412,16 +519,13 @@ async def capture_donation(order_id: str, db: Session = Depends(get_db)):
                 raise HTTPException(status_code=502, detail=f"PayPal error: {exc.body}")
 
     donation, campaign, credited = _store_capture_result(db, order_id, capture_data)
-    audit.log(
-        db,
-        actor=donation.donor_name,
-        action=f"donation.{donation.status}",
-        campaign_id=donation.campaign_id,
-        detail={"amount": donation.amount, "paypal_capture_status": donation.paypal_capture_status,
-                "new_pool_balance": campaign.pool_balance if campaign else None},
-    )
-    if credited and campaign:
-        await pay_campaign(db, campaign.id, paypal)
+    if credited and campaign and donation.source != "simulated":
+        try:
+            await asyncio.wait_for(pay_campaign(db, campaign.id, paypal), timeout=_PAYOUT_WAIT_SECONDS)
+        except (TimeoutError, PayPalError):
+            db.rollback()
+            # The donation is already committed. A vendor status check can resume the queue.
+            audit.log(db, actor="system", action="payout.queue_deferred", campaign_id=campaign.id)
     return DonationCaptureOut(
         **DonationOut.model_validate(donation).model_dump(),
         paypal_capture_details=capture_data,
@@ -437,7 +541,7 @@ async def capture_donation(order_id: str, db: Session = Depends(get_db)):
 async def submit_invoice(
     campaign_id: int = Form(...),
     budget_line_id: int = Form(...),
-    invoice_number: str = Form(...),
+    invoice_number: str = Form(..., min_length=1, max_length=200),
     vendor_id: Optional[int] = Form(None),
     invoice_file: Optional[UploadFile] = File(None),
     file: Optional[UploadFile] = File(None),
@@ -455,6 +559,8 @@ async def submit_invoice(
     """
     campaign = _get_or_404(db, Campaign, campaign_id)
     budget_line = _get_or_404(db, BudgetLine, budget_line_id)
+    if not invoice_number.strip():
+        raise HTTPException(422, "Invoice number is required.")
 
     if vendor_id is None:
         vendor_id = budget_line.vendor_id
@@ -473,49 +579,51 @@ async def submit_invoice(
     if actual_file is None:
         raise HTTPException(status_code=400, detail="Please attach an invoice file (PDF or image).")
 
-    content_type = actual_file.content_type or "application/octet-stream"
-    if content_type not in _ALLOWED_MIME_TYPES:
-        raise HTTPException(
-            status_code=415,
-            detail=f"Unsupported file type '{content_type}'. Allowed: PDF, JPEG, PNG, WEBP.",
-        )
-
-    # --- Save files ---
-    os.makedirs(settings.upload_dir, exist_ok=True)
-    ext = Path(actual_file.filename or "invoice").suffix or ".bin"
-    unique_name = f"{uuid.uuid4().hex}{ext}"
-    abs_save_path = os.path.join(settings.upload_dir, unique_name)
-
-    with open(abs_save_path, "wb") as f_out:
-        shutil.copyfileobj(actual_file.file, f_out)
-    web_file_path = f"uploads/{unique_name}"
-
-    abs_proof_path = None
-    web_proof_path = None
+    invoice_bytes, content_type, ext = await read_upload(actual_file)
+    proof_bytes = None
+    proof_mime = None
+    proof_ext = None
     if proof_photo and proof_photo.filename:
-        proof_ext = Path(proof_photo.filename).suffix or ".jpg"
-        proof_unique_name = f"proof_{uuid.uuid4().hex}{proof_ext}"
-        abs_proof_path = os.path.join(settings.upload_dir, proof_unique_name)
-        with open(abs_proof_path, "wb") as f_out:
-            shutil.copyfileobj(proof_photo.file, f_out)
-        web_proof_path = f"uploads/{proof_unique_name}"
+        proof_bytes, proof_mime, proof_ext = await read_upload(proof_photo, proof=True)
+
+    temporary = tempfile.TemporaryDirectory(prefix="straightmoney-")
+    abs_save_path = str(Path(temporary.name) / ("invoice" + ext))
+    await run_in_threadpool(Path(abs_save_path).write_bytes, invoice_bytes)
+    abs_proof_path = None
+    if proof_bytes is not None:
+        abs_proof_path = str(Path(temporary.name) / ("proof" + proof_ext))
+        await run_in_threadpool(Path(abs_proof_path).write_bytes, proof_bytes)
 
     # --- Create initial Invoice row (SUBMITTED) ---
+    db.query(Campaign).filter_by(id=campaign_id).with_for_update().populate_existing().one()
     invoice = Invoice(
         campaign_id=campaign_id,
         budget_line_id=budget_line_id,
         vendor_id=vendor_id,
-        invoice_number=invoice_number,
+        invoice_number=invoice_number.strip()[:200],
+        document_hash=hashlib.sha256(invoice_bytes).hexdigest(),
         amount=0.0,
         currency=campaign.currency,
         payout_email=vendor.payout_email,
-        raw_file_path=web_file_path,
-        evidence_path=web_proof_path or web_file_path,
+        raw_file_path=None,
+        evidence_path=None,
         status="SUBMITTED",
     )
     db.add(invoice)
     db.commit()
     db.refresh(invoice)
+    stored = StoredFile(invoice_id=invoice.id, kind="invoice", filename="invoice" + ext,
+                        mime_type=content_type, data=invoice_bytes)
+    db.add(stored)
+    db.flush()
+    invoice.raw_file_path = f"files/{stored.id}/{stored.filename}"
+    if proof_bytes is not None:
+        proof = StoredFile(invoice_id=invoice.id, kind="proof", filename="proof" + proof_ext,
+                           mime_type=proof_mime, data=proof_bytes)
+        db.add(proof)
+        db.flush()
+        invoice.evidence_path = f"files/{proof.id}/{proof.filename}"
+    db.commit()
     audit.log(db, actor="system", action="invoice.submitted", campaign_id=campaign_id, invoice_id=invoice.id)
 
     # --- LLM Extraction ---
@@ -524,6 +632,7 @@ async def submit_invoice(
             extraction_module.extract_invoice(abs_save_path, content_type), timeout=130
         )
     except Exception as exc:
+        temporary.cleanup()
         invoice.status = "NEEDS_REVIEW"
         reason = str(exc) or "Invoice extraction timed out. Please try again shortly."
         invoice.ai_summary = f"Extraction failed: {reason}"
@@ -538,16 +647,21 @@ async def submit_invoice(
         raise HTTPException(status_code=422, detail=f"Invoice extraction failed: {reason}")
 
     invoice.extracted_json = extracted.model_dump_json()
+    invoice.invoice_number = extracted.invoice_number.strip()
     invoice.amount = extracted.amount
     invoice.currency = extracted.currency or campaign.currency
-    invoice.payout_email = extracted.payout_email or vendor.payout_email
+    invoice.payout_email = extracted.payout_email
     invoice.description = extracted.description
     invoice.status = "EXTRACTED"
     db.commit()
     audit.log(db, actor="system", action="invoice.extracted", invoice_id=invoice.id)
 
+    # Serialize duplicate/commitment checks with approvals in this campaign.
+    campaign = db.query(Campaign).filter_by(id=campaign_id).with_for_update().populate_existing().one()
+    db.refresh(budget_line)
     # --- Policy checks ---
     invoice_data = {
+        "document_hash": invoice.document_hash,
         "payout_email": invoice.payout_email,
         "invoice_number": invoice.invoice_number,
         "amount": invoice.amount,
@@ -557,7 +671,7 @@ async def submit_invoice(
     }
     existing_invoices = (
         db.query(Invoice)
-        .filter(Invoice.campaign_id == campaign_id, Invoice.id != invoice.id)
+        .filter(Invoice.campaign_id == campaign_id, Invoice.id < invoice.id)
         .all()
     )
     invoice_data["committed_amount"] = sum(
@@ -565,7 +679,7 @@ async def submit_invoice(
         for other in existing_invoices
         if other.budget_line_id == budget_line_id and other.status in {
             "AWAITING_FUNDS", "PARTIALLY_PAID", "PAYOUT_PENDING", "FAILED"
-        } and any(v.decision == "approve" for v in other.verifications)
+        } and any(v.decision in {"approve", "test_override"} for v in other.verifications)
     )
     policy_results = run_policy_checks(invoice_data, campaign, budget_line, vendor, existing_invoices)
 
@@ -601,6 +715,8 @@ async def submit_invoice(
         invoice.ai_summary = "AI advisory timed out. Review the invoice and proof manually; payout checks are unaffected."
     except Exception as exc:
         invoice.ai_summary = f"Advisory checks could not be completed: {exc}"
+
+    temporary.cleanup()
 
     # --- Determine final status ---
     if any_hard_fail:
@@ -719,7 +835,7 @@ async def approve_invoice(
     Triggers a PayPal payout; status progresses to PAYOUT_PENDING then PAID
     (or FAILED if PayPal returns an error).
     """
-    invoice = _get_or_404(db, Invoice, invoice_id)
+    invoice = _locked_invoice(db, invoice_id)
     if payload.override_for_testing:
         if not settings.enable_verifier_test_override or settings.paypal_base_url.rstrip("/") != "https://api-m.sandbox.paypal.com":
             raise HTTPException(status_code=403, detail="Verifier test override is available only in PayPal Sandbox when enabled.")
@@ -740,9 +856,10 @@ async def approve_invoice(
                   detail={"reason": payload.note or "Sandbox payout test",
                           "bypassed_checks": [c.check_name for c in invoice.checks if not c.passed],
                           "invoice_payout_email": original_email,
-                          "registered_vendor_email": vendor.payout_email})
+                          "registered_vendor_email": vendor.payout_email}, commit=False)
     else:
         _guard_invoice_status(invoice, "AWAITING_VERIFIER")
+        _recheck_approval(db, invoice)
 
     # Record verification decision
     verification = Verification(
@@ -757,6 +874,7 @@ async def approve_invoice(
         actor=f"verifier:{payload.verifier_name}",
         action="invoice.approved",
         invoice_id=invoice_id,
+        commit=False,
     )
 
     # Retrieve dependencies for payout
@@ -791,7 +909,7 @@ def reject_invoice(
 
     Only invoices in AWAITING_VERIFIER status can be rejected this way.
     """
-    invoice = _get_or_404(db, Invoice, invoice_id)
+    invoice = _locked_invoice(db, invoice_id)
     _guard_invoice_status(invoice, "AWAITING_VERIFIER")
 
     verification = Verification(
@@ -802,14 +920,15 @@ def reject_invoice(
     )
     db.add(verification)
     invoice.status = "VERIFIER_REJECTED"
-    db.commit()
     audit.log(
         db,
         actor=f"verifier:{payload.verifier_name}",
         action="invoice.verifier_rejected",
         invoice_id=invoice_id,
+        commit=False,
         detail={"note": payload.note},
     )
+    db.commit()
     db.refresh(invoice)
     return _invoice_to_detail(invoice)
 
@@ -831,7 +950,7 @@ async def retry_invoice(
     Checks payout status first; if not already in a terminal success state,
     re-triggers the PayPal payout.
     """
-    invoice = _get_or_404(db, Invoice, invoice_id)
+    invoice = _locked_invoice(db, invoice_id)
     if invoice.status not in {"FAILED", "PAYOUT_PENDING", "PARTIALLY_PAID", "AWAITING_FUNDS"}:
         raise HTTPException(status_code=409, detail="Only failed or pending payouts can be checked or retried.")
 
@@ -889,7 +1008,7 @@ def get_ledger(campaign_id: int, db: Session = Depends(get_db)):
     # One ledger entry per confirmed installment; include earlier single payouts.
     invoices = db.query(Invoice).filter_by(campaign_id=campaign_id).all()
     for inv in invoices:
-        proof_url = f"/uploads/{Path(inv.evidence_path).name}" if inv.evidence_path else None
+        proof_url = f"/{inv.evidence_path.lstrip(chr(47))}" if inv.evidence_path else None
         vendor = db.get(Vendor, inv.vendor_id)
         if inv.payout and inv.payout.status == "success":
             entries.append(LedgerEntry(type="payout", amount=inv.payout.amount,

@@ -9,8 +9,9 @@ from models import Campaign, Donation
 
 def _response(status: str, order_status: str = "COMPLETED") -> dict:
     return {
+        "id": "ORDER-1",
         "status": order_status,
-        "purchase_units": [{"payments": {"captures": [{"status": status}]}}],
+        "purchase_units": [{"payments": {"captures": [{"status": status, "amount": {"value": "25.00", "currency_code": "USD"}}]}}],
     }
 
 
@@ -70,7 +71,7 @@ def test_order_status_alone_cannot_credit_a_donation():
     try:
         result, _, credited = _store_capture_result(db, donation.paypal_order_id, {"status": "COMPLETED"})
         assert not credited
-        assert result.status == "failed"
+        assert result.status == "pending"
         assert result.paypal_capture_status == "UNKNOWN"
         assert campaign.pool_balance == 0
     finally:

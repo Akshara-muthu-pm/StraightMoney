@@ -21,7 +21,9 @@ from schemas import AdvisoryResult, ExtractionResult
 
 def _get_client() -> genai.Client:
     """Return an authenticated GenAI client instance."""
-    api_key = settings.llm_api_key or os.environ.get("GEMINI_API_KEY") or ""
+    api_key = settings.llm_api_key
+    if not api_key or api_key.startswith("your-"):
+        api_key = os.environ.get("GEMINI_API_KEY", "")
     return genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=20000))
 
 
@@ -181,18 +183,21 @@ async def run_advisory_checks(
         item.description for item in extracted.line_items
     )
 
-    if not settings.llm_api_key or settings.llm_api_key.startswith("your-"):
+    api_key = settings.llm_api_key
+    if not api_key or api_key.startswith("your-"):
+        api_key = os.environ.get("GEMINI_API_KEY", "")
+    if not api_key or api_key.startswith("your-"):
         # Local heuristic fallback when Gemini API key is not configured
         if _has_suspicious_pattern(full_text):
             flags.append("Suspicious coercive wording detected in invoice text (regex flag).")
             summaries.append("AI fraud scan: suspicious prompt-injection keywords detected.")
         else:
-            summaries.append("AI fraud scan: clean, no suspicious instructions.")
-        summaries.append(f"Description aligns with budget line '{budget_line_name}'.")
+            summaries.append("Local text scan found no configured suspicious patterns; this is not a fraud verdict.")
+        summaries.append("AI is unavailable; manually review description and delivery evidence.")
         if not evidence_path:
             flags.append("No proof photo attached with this submission.")
         else:
-            summaries.append("Proof evidence attached and verified.")
+            summaries.append("Evidence is attached; its contents have not been verified.")
         return AdvisoryResult(flags=flags, summary=" ".join(summaries))
 
     # ------------------------------------------------------------------

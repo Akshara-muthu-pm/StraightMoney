@@ -2,7 +2,7 @@
 models.py — SQLAlchemy ORM models for all 10 StraightMoney database tables.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import (
     Boolean,
@@ -20,6 +20,10 @@ from sqlalchemy.orm import relationship
 from db import Base
 
 
+def _utcnow():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 class Campaign(Base):
     """Top-level fundraising campaign."""
 
@@ -33,7 +37,7 @@ class Campaign(Base):
     pool_balance = Column(Float, default=0.0, nullable=False)
     status = Column(String, default="draft", nullable=False)  # draft | active | closed
     organizer_name = Column(String, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=_utcnow, nullable=False)
 
     # Relationships
     vendors = relationship("Vendor", back_populates="campaign", cascade="all, delete-orphan")
@@ -52,7 +56,7 @@ class Vendor(Base):
     name = Column(String, nullable=False)
     payout_email = Column(String, nullable=False)
     status = Column(String, default="active", nullable=False)  # active | inactive
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=_utcnow, nullable=False)
 
     # Relationships
     campaign = relationship("Campaign", back_populates="vendors")
@@ -71,7 +75,7 @@ class BudgetLine(Base):
     vendor_id = Column(Integer, ForeignKey("vendors.id"), nullable=True)
     budgeted_amount = Column(Float, nullable=False)
     paid_amount = Column(Float, default=0.0, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=_utcnow, nullable=False)
 
     # Relationships
     campaign = relationship("Campaign", back_populates="budget_lines")
@@ -97,7 +101,7 @@ class Donation(Base):
     source = Column(String, default="paypal", nullable=False)  # paypal | simulated
     status = Column(String, default="created", nullable=False)  # created | pending | captured | failed
     paypal_capture_status = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=_utcnow, nullable=False)
 
     # Relationships
     campaign = relationship("Campaign", back_populates="donations")
@@ -113,6 +117,7 @@ class Invoice(Base):
     budget_line_id = Column(Integer, ForeignKey("budget_lines.id"), nullable=False)
     vendor_id = Column(Integer, ForeignKey("vendors.id"), nullable=False)
     invoice_number = Column(String, nullable=False)
+    document_hash = Column(String(64), nullable=True, index=True)
     amount = Column(Float, nullable=False)
     currency = Column(String, nullable=False)
     payout_email = Column(String, nullable=False)
@@ -126,7 +131,7 @@ class Invoice(Base):
         default="SUBMITTED",
         nullable=False,
     )  # SUBMITTED | EXTRACTED | CHECKED | AWAITING_VERIFIER | REJECTED | VERIFIER_REJECTED | PAYOUT_PENDING | PAID | FAILED
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=_utcnow, nullable=False)
 
     # Relationships
     campaign = relationship("Campaign", back_populates="invoices")
@@ -183,7 +188,7 @@ class Check(Base):
     severity = Column(String, nullable=False)  # hard | soft
     source = Column(String, nullable=False)  # rule | ai
     detail = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=_utcnow, nullable=False)
 
     # Relationships
     invoice = relationship("Invoice", back_populates="checks")
@@ -199,7 +204,7 @@ class Verification(Base):
     verifier_name = Column(String, nullable=False)
     decision = Column(String, nullable=False)  # approve | reject
     note = Column(Text, nullable=True)
-    timestamp = Column(DateTime, default=datetime.utcnow, nullable=False)
+    timestamp = Column(DateTime, default=_utcnow, nullable=False)
 
     # Relationships
     invoice = relationship("Invoice", back_populates="verifications")
@@ -217,7 +222,7 @@ class Payout(Base):
     status = Column(String, default="pending", nullable=False)  # pending | success | failed
     amount = Column(Float, nullable=False)
     currency = Column(String, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=_utcnow, nullable=False)
 
     # Relationships
     invoice = relationship("Invoice", back_populates="payout")
@@ -235,7 +240,7 @@ class PayoutInstallment(Base):
     status = Column(String, nullable=False, default="pending")
     amount = Column(Float, nullable=False)
     currency = Column(String, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=_utcnow, nullable=False)
 
     invoice = relationship("Invoice", back_populates="installments")
 
@@ -246,7 +251,7 @@ class AuditLog(Base):
     __tablename__ = "audit_log"
 
     id = Column(Integer, primary_key=True, index=True)
-    timestamp = Column(DateTime, default=datetime.utcnow, nullable=False)
+    timestamp = Column(DateTime, default=_utcnow, nullable=False)
     campaign_id = Column(Integer, nullable=True)
     invoice_id = Column(Integer, nullable=True)
     actor = Column(String, nullable=False)

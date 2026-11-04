@@ -27,6 +27,8 @@ from __future__ import annotations
 import json
 import os
 import uuid
+import time
+from urllib.parse import urlparse
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +36,13 @@ import dotenv
 import httpx
 
 SANDBOX_BASE_URL: str = "https://api-m.sandbox.paypal.com"
+
+
+def _sandbox_base(base_url: str) -> str:
+    value = base_url.strip().rstrip("/")
+    if value != SANDBOX_BASE_URL:
+        raise ValueError("SAFETY ERROR: Only the exact PayPal Sandbox endpoint is allowed.")
+    return value
 
 
 class PayPalError(Exception):
@@ -85,7 +94,7 @@ def load_env_credentials() -> tuple[str, str, str]:
     base_url = os.getenv("PAYPAL_BASE_URL", SANDBOX_BASE_URL).strip().rstrip("/")
 
     # Strict safety check: SANDBOX ONLY
-    if "sandbox" not in base_url.lower():
+    if base_url != SANDBOX_BASE_URL:
         raise ValueError(
             f"SAFETY ERROR: Base URL '{base_url}' is not a PayPal Sandbox endpoint. "
             "StraightMoney is configured for PayPal SANDBOX only!"
@@ -125,6 +134,7 @@ def get_access_token(
     Endpoint: POST /v1/oauth2/token
     Docs: https://developer.paypal.com/api/rest/authentication/
     """
+    base_url = _sandbox_base(base_url)
     url = f"{base_url}/v1/oauth2/token"
     headers = {
         "Accept": "application/json",
@@ -158,6 +168,7 @@ def create_order(
     Endpoint: POST /v2/checkout/orders
     Docs: https://developer.paypal.com/docs/api/orders/v2/#orders_create
     """
+    base_url = _sandbox_base(base_url)
     url = f"{base_url}/v2/checkout/orders"
     headers = {
         "Authorization": f"Bearer {access_token}",
@@ -202,6 +213,7 @@ def capture_order(
     Endpoint: POST /v2/checkout/orders/{id}/capture
     Docs: https://developer.paypal.com/docs/api/orders/v2/#orders_capture
     """
+    base_url = _sandbox_base(base_url)
     url = f"{base_url}/v2/checkout/orders/{order_id}/capture"
     headers = {
         "Authorization": f"Bearer {access_token}",
@@ -233,6 +245,7 @@ def create_payout(
     Endpoint: POST /v1/payments/payouts
     Docs: https://developer.paypal.com/docs/api/payments.payouts-batch/v1/#payouts_post
     """
+    base_url = _sandbox_base(base_url)
     url = f"{base_url}/v1/payments/payouts"
     headers = {
         "Authorization": f"Bearer {access_token}",
@@ -258,23 +271,10 @@ def create_payout(
         ],
     }
 
-    try:
-        with httpx.Client(timeout=30.0) as client:
-            resp = client.post(url, headers=headers, json=payload)
-        return _handle_response(resp, endpoint=url, method="POST")
-    except PayPalError as exc:
-        body_str = json.dumps(exc.body) if isinstance(exc.body, (dict, list)) else str(exc.body)
-        if exc.status_code == 403 or "PAYOUT_NOT_AVAILABLE" in body_str or "USER_BUSINESS_ACCOUNT_RESTRICTED" in body_str:
-            return {
-                "batch_header": {
-                    "payout_batch_id": f"SANDBOX-SIM-BATCH-{sender_batch_id}",
-                    "batch_status": "SUCCESS",
-                    "sender_batch_header": {"sender_batch_id": sender_batch_id},
-                },
-                "simulated": True,
-                "simulation_reason": "PayPal Sandbox Payouts restricted for this account (SPEC.md Section 10 fallback)",
-            }
-        raise
+    with httpx.Client(timeout=30.0) as client:
+        resp = client.post(url, headers=headers, json=payload)
+    return _handle_response(resp, endpoint=url, method="POST")
+
 
 def get_payout_status(
     access_token: str,
@@ -287,6 +287,7 @@ def get_payout_status(
     Endpoint: GET /v1/payments/payouts/{payout_batch_id}
     Docs: https://developer.paypal.com/docs/api/payments.payouts-batch/v1/#payouts_get
     """
+    base_url = _sandbox_base(base_url)
     url = f"{base_url}/v1/payments/payouts/{payout_batch_id}"
     headers = {
         "Authorization": f"Bearer {access_token}",
@@ -315,6 +316,7 @@ class PayPalClient:
         self._client_secret = client_secret
         self._simulate_payouts = os.getenv("PAYPAL_SIMULATE_PAYOUTS", "").lower() in ("true", "1", "yes")
         self._access_token: str | None = None
+        self._token_expires_at = 0.0
 
     @property
     def is_configured(self) -> bool:
@@ -345,14 +347,36 @@ class PayPalClient:
 
         result = _handle_response(resp, endpoint=url, method="POST")
         self._access_token = result["access_token"]
+        self._token_expires_at = time.monotonic() + max(0, float(result.get("expires_in", 300)) - 60)
         return self._access_token
 
     async def _auth_headers(self) -> dict[str, str]:
-        token = self._access_token or await self.get_access_token()
+        token = (self._access_token if self._access_token and time.monotonic() < self._token_expires_at
+                 else await self.get_access_token())
         return {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
         }
+
+    async def _request(self, method: str, url: str, payload: dict | None = None, request_id: str | None = None) -> dict[str, Any]:
+        try:
+            for attempt in range(2):
+                headers = await self._auth_headers()
+                if request_id:
+                    headers["PayPal-Request-Id"] = request_id
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    if method == "POST":
+                        response = await client.post(url, headers=headers, json=payload or {})
+                    else:
+                        response = await client.get(url, headers=headers)
+                if response.status_code == 401 and attempt == 0:
+                    self._access_token = None
+                    self._token_expires_at = 0
+                    continue
+                return _handle_response(response, endpoint=url, method=method)
+        except httpx.RequestError as exc:
+            raise PayPalError(503, {"error": "network_error"}, endpoint=url, method=method) from exc
+        raise PayPalError(503, {"error": "authentication_unavailable"}, endpoint=url, method=method)
 
     async def create_order(
         self,
@@ -363,13 +387,8 @@ class PayPalClient:
     ) -> dict[str, Any]:
         """Create a PayPal Order for a donor contribution."""
         if not self.is_configured:
-            return {
-                "id": f"SANDBOX-ORDER-{uuid.uuid4().hex[:10].upper()}",
-                "status": "CREATED",
-                "simulated": True,
-            }
+            raise PayPalError(503, {"error": "paypal_not_configured"})
 
-        headers = await self._auth_headers()
         url = f"{self._base_url}/v2/checkout/orders"
         payload = {
             "intent": "CAPTURE",
@@ -392,43 +411,21 @@ class PayPalClient:
             },
         }
 
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post(url, headers=headers, json=payload)
-            return _handle_response(resp, endpoint=url, method="POST")
-        except httpx.RequestError as exc:
-            raise PayPalError(503, body={"error": "network_error", "message": str(exc)}, endpoint=url, method="POST") from exc
+        return await self._request("POST", url, payload)
 
     async def capture_order(self, order_id: str) -> dict[str, Any]:
         """Capture an approved PayPal Order."""
         if not self.is_configured or order_id.startswith("SANDBOX-"):
-            return {
-                "id": order_id,
-                "status": "COMPLETED",
-                "purchase_units": [{"payments": {"captures": [{"status": "COMPLETED"}]}}],
-                "simulated": True,
-            }
+            raise PayPalError(503, {"error": "paypal_capture_unavailable"})
 
-        headers = await self._auth_headers()
         url = f"{self._base_url}/v2/checkout/orders/{order_id}/capture"
 
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post(url, headers=headers, json={})
-            return _handle_response(resp, endpoint=url, method="POST")
-        except httpx.RequestError as exc:
-            raise PayPalError(503, body={"error": "network_error", "message": str(exc)}, endpoint=url, method="POST") from exc
+        return await self._request("POST", url, {}, request_id=f"capture-{order_id}")
 
     async def get_order(self, order_id: str) -> dict[str, Any]:
         """Read a previously captured order without sending another capture request."""
-        headers = await self._auth_headers()
         url = f"{self._base_url}/v2/checkout/orders/{order_id}"
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.get(url, headers=headers)
-            return _handle_response(resp, endpoint=url, method="GET")
-        except httpx.RequestError as exc:
-            raise PayPalError(503, body={"error": "network_error", "message": str(exc)}, endpoint=url, method="GET") from exc
+        return await self._request("GET", url)
 
     async def create_payout(
         self,
@@ -438,15 +435,18 @@ class PayPalClient:
         payout_email: str,
         vendor_name: str,
         installment_id: int | None = None,
+        sender_batch_id: str | None = None,
     ) -> dict[str, Any]:
         """Initiate a PayPal Payout to a vendor's email."""
         # Use deterministic sender_batch_id for idempotency per SPEC.md Section 10
-        sender_batch_id = (
+        sender_batch_id = sender_batch_id or (
             f"straightmoney-installment-{installment_id}"
             if installment_id is not None else f"straightmoney-invoice-{invoice_id}"
         )
 
-        if not self.is_configured or self._simulate_payouts:
+        if not self.is_configured:
+            raise PayPalError(503, {"error": "paypal_not_configured"})
+        if self._simulate_payouts:
             return {
                 "batch_header": {
                     "payout_batch_id": f"SANDBOX-BATCH-{uuid.uuid4().hex[:10].upper()}",
@@ -456,7 +456,6 @@ class PayPalClient:
                 "simulated": True,
             }
 
-        headers = await self._auth_headers()
         url = f"{self._base_url}/v1/payments/payouts"
         payload = {
             "sender_batch_header": {
@@ -481,16 +480,27 @@ class PayPalClient:
         }
 
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post(url, headers=headers, json=payload)
-            return _handle_response(resp, endpoint=url, method="POST")
-        except httpx.RequestError as exc:
-            raise PayPalError(503, body={"error": "network_error", "message": str(exc)}, endpoint=url, method="POST") from exc
+            return await self._request("POST", url, payload)
+        except PayPalError as exc:
+            body = exc.body if isinstance(exc.body, dict) else {}
+            duplicate = "DUPLICATE_BATCH_ID" in json.dumps(body)
+            if duplicate:
+                for link in body.get("links", []):
+                    parsed = urlparse(link.get("href", ""))
+                    if (link.get("rel") == "self" and parsed.scheme == "https"
+                            and parsed.netloc == "api-m.sandbox.paypal.com"
+                            and parsed.path.startswith("/v1/payments/payouts/")):
+                        return await self.get_payout_status(parsed.path.rsplit("/", 1)[-1])
+            raise
+
 
     async def get_payout_status(self, batch_id: str) -> dict[str, Any]:
         """Retrieve the current status of a PayPal Payout batch."""
-        if not self.is_configured or self._simulate_payouts or batch_id.startswith("SANDBOX-"):
+        if not self.is_configured:
+            raise PayPalError(503, {"error": "paypal_not_configured"})
+        if self._simulate_payouts or batch_id.startswith("SANDBOX-"):
             return {
+                "simulated": True,
                 "batch_header": {
                     "payout_batch_id": batch_id,
                     "batch_status": "SUCCESS",
@@ -498,12 +508,6 @@ class PayPalClient:
                 "items": [{"transaction_status": "SUCCESS"}],
             }
 
-        headers = await self._auth_headers()
         url = f"{self._base_url}/v1/payments/payouts/{batch_id}"
 
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.get(url, headers=headers)
-            return _handle_response(resp, endpoint=url, method="GET")
-        except httpx.RequestError as exc:
-            raise PayPalError(503, body={"error": "network_error", "message": str(exc)}, endpoint=url, method="GET") from exc
+        return await self._request("GET", url)
