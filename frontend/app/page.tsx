@@ -18,7 +18,7 @@ export default function HomePage() {
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#0070BA] opacity-75"></span>
               <span className="relative inline-flex rounded-full h-2 w-2 bg-[#0070BA]"></span>
             </span>
-            ZERO-CUSTODY ESCROW &middot; PAYPAL AI HACKATHON
+            TRANSPARENT SANDBOX FUNDRAISING &middot; PAYPAL AI HACKATHON
           </div>
           <h1
             id="hero-title"
@@ -30,7 +30,7 @@ export default function HomePage() {
             </span>
           </h1>
           <p className="mt-6 max-w-lg text-base leading-relaxed text-slate-600">
-            Fund community projects where organizers never hold the money. Donors contribute via PayPal Orders v2 into verified escrow, vendors submit invoices with delivery evidence, Gemini AI audits policy compliance, and reviewers approve tracked PayPal Payouts.
+            Fund community projects where organizers never hold the money. Donors contribute via PayPal Orders v2 into the campaign balance, vendors submit invoices with delivery evidence, Python rules check invoice policy and Gemini adds advisory flags, and reviewers approve tracked PayPal Payouts.
           </p>
           <div className="mt-8 flex flex-wrap items-center gap-3.5">
             <Link href="#campaigns" className="button-primary shadow-lg shadow-blue-950/20 text-sm">
@@ -43,10 +43,10 @@ export default function HomePage() {
 
           <div className="mt-10 grid grid-cols-2 gap-3 sm:grid-cols-4">
             {[
-              ["PayPal Orders v2", "Escrow Vault", "#003087"],
+              ["PayPal Orders v2", "Campaign Balance", "#003087"],
               ["Gemini AI Checks", "Document Audit", "#0070BA"],
               ["PayPal Payouts", "Direct to Vendor", "#10B981"],
-              ["Public Ledger", "Zero Custody Leak", "#FFC439"]
+              ["Public Ledger", "Visible Spending", "#FFC439"]
             ].map(([title, subtitle, accent]) => (
               <div key={title} className="rounded-2xl border border-white/90 bg-white/70 p-3 shadow-sm backdrop-blur-md transition hover:border-blue-200">
                 <span className="flex items-center gap-1.5">

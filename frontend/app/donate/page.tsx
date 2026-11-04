@@ -8,11 +8,11 @@ import ProgressBar from "@/components/ProgressBar";
 import StatusBadge from "@/components/StatusBadge";
 import { campaignImagery } from "@/lib/campaign-imagery";
 import { api } from "@/lib/api";
-import { money } from "@/lib/presentation";
-import type { CampaignSummary } from "@/lib/types";
+import { money, totalFunded } from "@/lib/presentation";
+import type { Campaign } from "@/lib/types";
 
 export default function DonatePage() {
-  const [campaigns, setCampaigns] = useState<CampaignSummary[]>([]);
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -26,9 +26,8 @@ export default function DonatePage() {
     let active = true;
     api
       .listCampaigns()
-      .then((items) => {
-        if (active) setCampaigns(items.filter((item) => item.status === "active"));
-      })
+      .then((items) => Promise.all(items.filter((item) => item.status === "active").map((item) => api.getCampaign(item.id))))
+      .then((items) => { if (active) setCampaigns(items); })
       .catch(() => {
         if (active) setError("We couldn’t load campaigns right now. Please try again.");
       })
@@ -62,7 +61,7 @@ export default function DonatePage() {
         </Link>
         <div className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50/90 px-3.5 py-1 text-[11px] font-black tracking-wider text-[#003087] shadow-2xs backdrop-blur-md dark:border-blue-500/30 dark:from-blue-950/80 dark:to-indigo-950/80 dark:text-sky-300">
           <span className="h-1.5 w-1.5 rounded-full bg-[#0070BA] animate-pulse" />
-          PAYPAL ORDERS V2 &middot; ESCROW PROTECTED
+          PAYPAL ORDERS V2 &middot; SANDBOX CHECKOUT
         </div>
       </div>
 
@@ -79,7 +78,7 @@ export default function DonatePage() {
             Make a <span className="bg-gradient-to-r from-[#003087] via-[#0070BA] to-[#009CDE] bg-clip-text text-transparent">verified contribution</span>.
           </h1>
           <p className="mt-4 max-w-2xl text-base leading-relaxed text-slate-600 dark:text-slate-300">
-            Choose the community project you want to back. Organizers never hold your donation: funds are captured directly into locked escrow and released via PayPal Payouts to verified vendors once proof of delivery is certified.
+            Choose the community project you want to back. Organizers never hold your donation: funds are captured directly into the campaign balance and released via PayPal Payouts to verified vendors after a human verifier reviews delivery evidence.
           </p>
 
           {/* Graphical Fintech Trust Pillars */}
@@ -92,7 +91,7 @@ export default function DonatePage() {
                 </svg>
               </span>
               <div>
-                <strong className="block text-xs font-black text-[#001435] dark:text-white">Locked Escrow</strong>
+                <strong className="block text-xs font-black text-[#001435] dark:text-white">Campaign Balance</strong>
                 <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">PayPal Orders v2</span>
               </div>
             </div>
@@ -143,11 +142,11 @@ export default function DonatePage() {
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
                 Live Transparency
               </span>
-              <span className="text-[11px] font-black tracking-wide text-amber-300">100% Directed</span>
+              <span className="text-[11px] font-black tracking-wide text-amber-300">Tracked payouts</span>
             </div>
           </div>
           <p className="mt-3 text-center text-xs font-semibold text-slate-600 dark:text-slate-300">
-            Join other community members funding local change with complete zero-custody guarantees.
+            Join other community members funding local change with a public record of campaign spending.
           </p>
         </div>
       </div>
@@ -155,7 +154,7 @@ export default function DonatePage() {
       {loading && (
         <div role="status" className="liquid-glass mt-8 p-8 text-center text-sm font-semibold text-slate-600 dark:text-slate-300">
           <div className="mx-auto h-7 w-7 animate-spin rounded-full border-2 border-[#0070BA] border-t-transparent mb-3" />
-          Loading verified campaigns accepting contributions...
+          Loading active campaigns accepting contributions...
         </div>
       )}
 
@@ -236,7 +235,7 @@ export default function DonatePage() {
                           Goal: {money(item.goal_amount, item.currency)}
                         </span>
                         <span className="mt-1 block text-[10px] font-bold text-[#0070BA] dark:text-sky-400">
-                          {money(item.pool_balance, item.currency)} in escrow
+                          {money(item.pool_balance, item.currency)} available
                         </span>
                       </div>
                     </button>
@@ -318,7 +317,7 @@ export default function DonatePage() {
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-400">
                       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" />
                     </svg>
-                    PayPal Escrow Vault
+                    PayPal Sandbox Checkout
                   </span>
                 </div>
 
@@ -351,9 +350,9 @@ export default function DonatePage() {
                 {/* Dynamic Animated Funding Progress Bar */}
                 <div className="mt-6 rounded-2xl border-2 border-slate-200/80 bg-white p-4 shadow-2xs dark:border-white/10 dark:bg-slate-900/60">
                   <ProgressBar
-                    current={campaign.pool_balance}
+                    current={totalFunded(campaign)}
                     goal={campaign.goal_amount}
-                    caption="Escrow Funding Status"
+                    caption="Campaign funding"
                   />
                 </div>
 
@@ -370,7 +369,7 @@ export default function DonatePage() {
                   <div className="rounded-2xl border-2 border-blue-200/90 bg-blue-50/90 p-4 shadow-2xs dark:border-blue-500/30 dark:bg-blue-950/50">
                     <dt className="text-[11px] font-extrabold uppercase tracking-wider text-[#003087] dark:text-sky-300 flex items-center gap-1.5">
                       <span className="h-1.5 w-1.5 rounded-full bg-[#0070BA] animate-pulse" />
-                      In Escrow
+                      Available funds
                     </dt>
                     <dd className="mt-1 text-xl font-black text-[#003087] dark:text-sky-200">
                       {money(campaign.pool_balance, campaign.currency)}
@@ -385,7 +384,7 @@ export default function DonatePage() {
                       ✓
                     </span>
                     <p className="text-emerald-950 dark:text-emerald-200 font-semibold leading-relaxed">
-                      <strong>Zero-Custody Guarantee:</strong> Organizers never touch donation money. Funds are disbursed strictly via PayPal Payouts to verified vendors upon approved invoices.
+                      <strong>Vendor payout routing:</strong> Organizers never touch donation money. Funds are disbursed strictly via PayPal Payouts to verified vendors upon approved invoices.
                     </p>
                   </div>
                 </div>
@@ -401,7 +400,7 @@ export default function DonatePage() {
                 </div>
 
                 <p className="mt-6 border-t border-slate-200 pt-4 text-[11px] leading-relaxed text-slate-500 dark:border-white/10 dark:text-slate-400">
-                  A verified reviewer reviews vendor invoices, itemization, and delivery proof photos before approving disbursements.
+                  A human verifier reviews vendor invoices, itemization, and delivery proof photos before approving disbursements.
                 </p>
               </div>
             </aside>

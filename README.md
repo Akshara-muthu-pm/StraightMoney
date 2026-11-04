@@ -22,7 +22,7 @@ After an Orders v2 capture response, the API reads `purchase_units[0].payments.c
 
 ## Run locally
 
-Prerequisites: Python 3.11+, Node.js and npm, and Docker Compose. A Gemini API key enables AI invoice extraction and advisory checks; without one, the backend uses a simple heuristic fallback for demos. PayPal Sandbox credentials are needed to exercise actual Sandbox checkout and payout calls; the app also has simulation paths for local demonstrations.
+Prerequisites: Python 3.11+, Node.js and npm, and Docker Compose. A Gemini API key enables AI invoice extraction and advisory checks; without one, text PDFs can use a strict fallback that reads labeled invoice number, payout email, total and currency. Missing fields and image invoices require manual review; the fallback never invents amounts or verifies delivery. PayPal Sandbox credentials are needed to exercise actual Sandbox checkout and payout calls; the app also has simulation paths for local demonstrations.
 
 1. From the repository root, copy the environment examples and edit the copies:
 
@@ -100,9 +100,27 @@ The optional live Sandbox CLI scripts require real Sandbox credentials and an in
 
 - Backend: `backend/main.py` exposes the API; `policy.py` contains deterministic checks; `installments.py` manages payout state; `payments.py` calls PayPal; `extraction.py` and `advisory.py` call Gemini.
 - Frontend: `frontend/app` contains the routes; `frontend/lib/api.ts` is the typed API client.
-- `docker-compose.yml` starts PostgreSQL. Tables are created with SQLAlchemy `create_all`; there is no migration system yet.
+- `docker-compose.yml` starts PostgreSQL. Tables are created with SQLAlchemy `create_all`; existing PostgreSQL databases receive the additive, idempotent SQL migrations in `backend/migrations`.
 - [`SPEC.md`](SPEC.md) describes the intended product. [`docs/demo-script.md`](docs/demo-script.md) has the reset checklist, scenario run, and video script; [`sample_invoices/`](sample_invoices/) contains fake invoices and proof illustrations. Submission screenshots are still to be added.
-- This is a hackathon prototype. The API has no user authentication or role enforcement, and uploaded invoice and proof files are served publicly from `/uploads`. Use synthetic demo data and Sandbox credentials only.
+- This is a hackathon prototype. The API has no user authentication or role enforcement, and new invoice and proof uploads are stored in PostgreSQL and served publicly from `/files`; validated legacy files remain available from `/uploads`. Use synthetic demo data and Sandbox credentials only.
+
+## Payment and upload safeguards
+
+Approval rechecks current policy and commitments under a database lock. Duplicate checks use the extracted invoice number and a document hash for new uploads. Payout reservations exclude simulated donation balances, so demo donations cannot fund actual Sandbox transfers. Unknown captures and uncertain payout responses remain retryable using the same payment key; confirmed settlements cannot be counted twice.
+
+Uploads are limited to 10 MiB each, 20 PDF pages, and 20 million image pixels. File contents determine the stored type and extension; proof must be a valid JPEG, PNG or WEBP. Invalid file formats are rejected before processing. New evidence is stored in PostgreSQL, while old disk-backed evidence still requires its original upload directory. Back up both when retaining legacy records.
+
+Public write endpoints have a per-process limit of 30 requests per minute per source IP. Configure `MAX_UPLOAD_BYTES`, `MAX_PDF_PAGES` and `WRITE_RATE_LIMIT` if needed. An Internet-facing deployment also needs reverse-proxy body/time limits and a shared rate limiter across workers.
+
+This remains a Sandbox prototype: demo role selection is not account authentication, organizer/vendor submissions are public, and invoice details, verifier notes and evidence are public. The verifier key protects financial decisions. PayPal captures funds in the merchant Sandbox account; the campaign balance is application bookkeeping, not a PayPal escrow product. Refunds, disputes, account-level authorization and production compliance remain outside the demo scope.
+
+Optional PostgreSQL locking and migration tests require a disposable test database (the suite creates and drops isolated schemas):
+
+```bash
+TEST_POSTGRES_URL=postgresql+psycopg://USER:PASSWORD@localhost:5432/TEST_DB python -m pytest -q tests/test_postgres_concurrency.py
+```
+
+Run that command from `backend`; use local test credentials, never a production database.
 
 ## License
 

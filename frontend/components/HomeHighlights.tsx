@@ -101,7 +101,7 @@ export default function HomeHighlights() {
           <p className="text-xs font-black uppercase tracking-widest text-[#003087]">A purpose you can follow</p>
           <h3 className="mt-2 text-2xl font-extrabold tracking-tight text-[#001435]">A plan. Reviewed work. A visible record.</h3>
           <p className="mt-2 text-xs leading-relaxed text-slate-600">
-            Each campaign brings these pieces together in locked escrow so you stay fully connected to the impact you create.
+            Each campaign brings these pieces together in the campaign balance so you stay fully connected to the impact you create.
           </p>
         </div>
         <Link href="#campaigns" className="button-gold text-xs font-black shadow-md shadow-[#FFC439]/30 hover:scale-105 shrink-0">

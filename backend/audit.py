@@ -18,6 +18,7 @@ def log(
     campaign_id: Optional[int] = None,
     invoice_id: Optional[int] = None,
     detail: Optional[Any] = None,
+    commit: bool = True,
 ) -> AuditLog:
     """
     Create and commit an AuditLog row.
@@ -48,6 +49,7 @@ def log(
         detail=detail_str,
     )
     db.add(entry)
-    db.commit()
-    db.refresh(entry)
+    if commit:
+        db.commit()
+        db.refresh(entry)
     return entry

@@ -8,6 +8,7 @@ structures and return CheckResult lists so they are trivially unit-testable.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from typing import Any
 
 from schemas import CheckResult
@@ -78,7 +79,8 @@ def check_no_duplicate(invoice_data: dict, vendor: Any, existing_invoices: list)
         for inv in existing_invoices
         if (
             inv.vendor_id == vendor.id
-            and inv.invoice_number == invoice_data.get("invoice_number")
+            and (inv.invoice_number.strip().casefold() == invoice_data.get("invoice_number", "").strip().casefold()
+                 or (invoice_data.get("document_hash") and getattr(inv, "document_hash", None) == invoice_data["document_hash"]))
         )
     ]
     passed = len(duplicates) == 0
@@ -98,7 +100,7 @@ def check_within_budget_line(invoice_data: dict, budget_line: Any) -> CheckResul
     """Invoice amount must not exceed the remaining budget on the line."""
     remaining = budget_line.budgeted_amount - budget_line.paid_amount - float(invoice_data.get("committed_amount", 0))
     amount = float(invoice_data.get("amount", 0))
-    passed = amount <= remaining
+    passed = math.isfinite(amount) and amount > 0 and amount <= remaining + 0.000001
     detail = (
         f"Amount {amount} is within remaining budget {remaining:.2f}."
         if passed

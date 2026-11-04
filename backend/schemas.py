@@ -4,12 +4,35 @@ schemas.py — Pydantic v2 request/response models for StraightMoney API.
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Any, Optional
+from datetime import datetime, timezone
+from typing import Annotated, Any, Optional
+from decimal import Decimal
+import re
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, PlainSerializer, StringConstraints, field_validator
 
 from config import settings
+
+
+def _cents(value: float) -> float:
+    if Decimal(str(value)) != Decimal(str(value)).quantize(Decimal("0.01")):
+        raise ValueError("Amounts must have at most two decimal places.")
+    return value
+
+
+def _email(value: str) -> str:
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value):
+        raise ValueError("A valid payout email is required.")
+    return value
+
+
+Money = Annotated[float, Field(gt=0, le=100_000_000, allow_inf_nan=False), AfterValidator(_cents)]
+Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+Email = Annotated[str, StringConstraints(strip_whitespace=True, max_length=254), AfterValidator(_email)]
+Currency = Annotated[str, StringConstraints(strip_whitespace=True, to_upper=True, pattern=r"^USD$")]
+UTCDateTime = Annotated[datetime, PlainSerializer(
+    lambda value: (value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value).isoformat(),
+    return_type=str, when_used="json")]
 
 
 # ---------------------------------------------------------------------------
@@ -20,8 +43,8 @@ from config import settings
 class VendorCreate(BaseModel):
     """Fields required to create a vendor inside a campaign."""
 
-    name: str
-    payout_email: str
+    name: Name
+    payout_email: Email
 
 
 class VendorOut(BaseModel):
@@ -34,7 +57,7 @@ class VendorOut(BaseModel):
     name: str
     payout_email: str
     status: str
-    created_at: datetime
+    created_at: UTCDateTime
 
 
 # ---------------------------------------------------------------------------
@@ -45,11 +68,11 @@ class VendorOut(BaseModel):
 class BudgetLineCreate(BaseModel):
     """Fields required to create a budget line inside a campaign."""
 
-    name: str
+    name: Name
     vendor_id: Optional[int] = None
-    budgeted_amount: float
-    vendor_name: Optional[str] = None
-    vendor_payout_email: Optional[str] = None
+    budgeted_amount: Money
+    vendor_name: Optional[Name] = None
+    vendor_payout_email: Optional[Email] = None
 
 
 class BudgetLineOut(BaseModel):
@@ -64,7 +87,7 @@ class BudgetLineOut(BaseModel):
     vendor_name: Optional[str] = None
     budgeted_amount: float
     paid_amount: float
-    created_at: datetime
+    created_at: UTCDateTime
 
 
 # ---------------------------------------------------------------------------
@@ -75,13 +98,13 @@ class BudgetLineOut(BaseModel):
 class CampaignCreate(BaseModel):
     """Full campaign creation payload including nested vendors and budget lines."""
 
-    title: str
-    description: Optional[str] = None
-    goal_amount: float
-    currency: str = "USD"
-    organizer_name: str
-    vendors: list[VendorCreate] = []
-    budget_lines: list[BudgetLineCreate] = []
+    title: Name
+    description: Optional[str] = Field(default=None, max_length=10000)
+    goal_amount: Money
+    currency: Currency = "USD"
+    organizer_name: Name
+    vendors: list[VendorCreate] = Field(default_factory=list, max_length=100)
+    budget_lines: list[BudgetLineCreate] = Field(default_factory=list, max_length=100)
 
 
 class CampaignOut(BaseModel):
@@ -97,7 +120,7 @@ class CampaignOut(BaseModel):
     pool_balance: float
     status: str
     organizer_name: str
-    created_at: datetime
+    created_at: UTCDateTime
 
 
 class CampaignDetail(CampaignOut):
@@ -117,8 +140,8 @@ class CampaignDetail(CampaignOut):
 class DonationCreate(BaseModel):
     """Payload to initiate a donation (creates a PayPal order)."""
 
-    donor_name: str
-    amount: float = Field(gt=0, allow_inf_nan=False)
+    donor_name: Name
+    amount: Money
     simulate: bool = False
 
     @field_validator("amount")
@@ -143,7 +166,7 @@ class DonationOut(BaseModel):
     status: str
     source: str
     paypal_capture_status: Optional[str] = None
-    created_at: datetime
+    created_at: UTCDateTime
 
 
 class DonationCaptureOut(DonationOut):
@@ -179,7 +202,7 @@ class CheckOut(BaseModel):
     severity: str
     source: str
     detail: str
-    created_at: datetime
+    created_at: UTCDateTime
 
 
 # ---------------------------------------------------------------------------
@@ -190,8 +213,8 @@ class CheckOut(BaseModel):
 class VerificationCreate(BaseModel):
     """Human verifier decision payload."""
 
-    verifier_name: str
-    note: Optional[str] = None
+    verifier_name: Name
+    note: Optional[str] = Field(default=None, max_length=5000)
     override_for_testing: bool = False
 
 
@@ -205,7 +228,7 @@ class VerificationOut(BaseModel):
     verifier_name: str
     decision: str
     note: Optional[str]
-    timestamp: datetime
+    timestamp: UTCDateTime
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +248,7 @@ class PayoutOut(BaseModel):
     status: str
     amount: float
     currency: str
-    created_at: datetime
+    created_at: UTCDateTime
 
 
 # ---------------------------------------------------------------------------
@@ -259,7 +282,7 @@ class InvoiceOut(BaseModel):
     ai_summary: Optional[str] = None
     paid_amount: float = 0.0
     remaining_amount: float = 0.0
-    created_at: datetime
+    created_at: UTCDateTime
 
 
 class InvoiceDetail(InvoiceOut):
@@ -286,7 +309,7 @@ class LedgerEntry(BaseModel):
     actor_name: str
     status: str
     source: Optional[str] = None
-    created_at: datetime
+    created_at: UTCDateTime
     proof_url: Optional[str] = None
 
 
@@ -299,17 +322,17 @@ class LineItem(BaseModel):
     """A single line item extracted from an invoice."""
 
     description: str
-    amount: float
+    amount: Annotated[float, Field(ge=0, le=100_000_000, allow_inf_nan=False), AfterValidator(_cents)]
 
 
 class ExtractionResult(BaseModel):
     """Structured data extracted from an invoice file by the LLM."""
 
-    vendor_name: str
-    payout_email: str
-    invoice_number: str
-    amount: float
-    currency: str
+    vendor_name: Name
+    payout_email: Email
+    invoice_number: Name
+    amount: Money
+    currency: Annotated[str, StringConstraints(strip_whitespace=True, to_upper=True, pattern=r"^[A-Z]{3}$")]
     description: str
     line_items: list[LineItem] = []
 

@@ -44,7 +44,7 @@ export default function BudgetOverview({ campaign }: { campaign: Campaign }) {
         </Link>
       </div>
       <p className="mt-3 text-xs leading-relaxed text-slate-600">
-        See what has reached vendors via PayPal Payouts, what is approved and waiting in escrow, and what is still open in the plan.
+        See what has reached vendors via PayPal Payouts, what is approved and waiting for funds, and what is still open in the plan.
       </p>
 
       <div className="mt-5 grid gap-3 sm:grid-cols-3" aria-label="Budget totals">
@@ -62,7 +62,7 @@ export default function BudgetOverview({ campaign }: { campaign: Campaign }) {
             <span className="h-2 w-2 rounded-full bg-amber-500 shadow-sm shadow-amber-500/50" />
           </div>
           <p className="mt-2 text-2xl font-black text-amber-950">{state === "ready" ? amount(totals.approvedUnpaid) : "—"}</p>
-          <p className="mt-0.5 text-[11px] text-amber-800/80">Locked in escrow queue</p>
+          <p className="mt-0.5 text-[11px] text-amber-800/80">Approved payment queue</p>
         </div>
         <div className="rounded-2xl border border-blue-200/70 bg-blue-50/50 p-4 backdrop-blur-md shadow-sm">
           <div className="flex items-center justify-between">

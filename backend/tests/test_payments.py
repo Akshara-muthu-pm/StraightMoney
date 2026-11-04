@@ -181,34 +181,13 @@ def test_get_payout_status(monkeypatch: pytest.MonkeyPatch) -> None:
     assert res["batch_header"]["batch_status"] == "SUCCESS"
 
 
-def test_create_payout_fallback_on_403(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Verify that create_payout gracefully falls back to simulated payout when PayPal Sandbox returns 403 PAYOUT_NOT_AVAILABLE."""
-    batch_id = "straightmoney-invoice-42"
-
-    def mock_post(client: httpx.Client, url: str, **kwargs: object) -> httpx.Response:
-        return httpx.Response(
-            status_code=403,
-            json={
-                "name": "PAYOUT_NOT_AVAILABLE",
-                "message": "You live in a country that is not allowed to send this payout.",
-            },
-            request=httpx.Request("POST", url),
-        )
-
-    monkeypatch.setattr(httpx.Client, "post", mock_post)
-    res = create_payout(
-        "TEST_TOKEN",
-        sender_batch_id=batch_id,
-        receiver_email="vendor@example.com",
-        amount="150.00",
-        currency="USD",
-        base_url=SANDBOX_BASE_URL,
-    )
-
-    assert res["simulated"] is True
-    assert f"SANDBOX-SIM-BATCH-{batch_id}" in res["batch_header"]["payout_batch_id"]
-    assert res["batch_header"]["sender_batch_header"]["sender_batch_id"] == batch_id
-    assert res["batch_header"]["batch_status"] == "SUCCESS"
+def test_create_payout_preserves_rejection_on_403(monkeypatch):
+    def restricted(client, url, **kwargs):
+        return httpx.Response(403, json={"name": "PAYOUT_NOT_AVAILABLE"}, request=httpx.Request("POST", url))
+    monkeypatch.setattr(httpx.Client, "post", restricted)
+    with pytest.raises(PayPalError) as error:
+        create_payout("TEST", "batch", "vendor@example.com")
+    assert error.value.status_code == 403
 
 
 def test_create_payout_raises_on_500(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -88,9 +88,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </div>
 
               <div>
-                <h4 className="text-xs font-black uppercase tracking-widest text-[#001435]">Security Guarantee</h4>
+                <h4 className="text-xs font-black uppercase tracking-widest text-[#001435]">Sandbox payment flow</h4>
                 <p className="mt-3.5 text-xs leading-relaxed text-slate-500">
-                  Organizers never hold funds. Donations are captured directly into locked escrow and disbursed via PayPal Payouts to verified vendor accounts.
+                  Organizers never hold funds. Donations are captured directly into the campaign balance and disbursed via PayPal Payouts to verified vendor accounts.
                 </p>
                 <div className="mt-3 inline-flex items-center gap-1.5 text-[11px] font-bold text-slate-400">
                   <span>PayPal AI Hackathon 2026</span>
@@ -102,7 +102,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <span>&copy; 2026 StraightMoney. MIT License. PayPal AI Hackathon prototype.</span>
               <span className="flex items-center gap-2 rounded-full border border-emerald-200/90 bg-emerald-50/90 px-3.5 py-1 text-xs font-black text-emerald-900 shadow-sm backdrop-blur-md">
                 <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span>PayPal Sandbox Verified</span>
+                <span>PayPal Sandbox Prototype</span>
               </span>
             </div>
           </footer>

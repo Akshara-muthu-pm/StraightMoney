@@ -63,7 +63,7 @@ export default function CampaignExplore() {
                   <p className="mt-3 text-xs text-slate-600">
                     <strong className="text-sm font-black text-[#001435]">{money(totalFunded(campaign), campaign.currency)}</strong> funded of {money(campaign.goal_amount, campaign.currency)}
                   </p>
-                  <p className="mt-0.5 text-[11px] text-slate-500">Includes available escrow funds and completed vendor payouts.</p>
+                  <p className="mt-0.5 text-[11px] text-slate-500">Includes available campaign funds and completed vendor payouts.</p>
                 </div>
               </div>
               <div className="mt-8 flex flex-wrap items-center gap-3 border-t border-slate-100/80 pt-5">

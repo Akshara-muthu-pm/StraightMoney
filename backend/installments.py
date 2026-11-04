@@ -4,7 +4,9 @@ from __future__ import annotations
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from models import Campaign, Invoice, PayoutInstallment, Vendor
+from models import BudgetLine, Campaign, Donation, Invoice, PayoutInstallment, Vendor
+import math
+import uuid
 import audit
 from payments import PayPalClient, PayPalError
 
@@ -22,16 +24,22 @@ def _status(invoice: Invoice) -> str:
 
 
 def _apply_status(db: Session, part: PayoutInstallment, response: dict) -> None:
-    invoice = part.invoice
-    campaign = invoice.campaign
-    line = invoice.budget_line
+    campaign_id = part.invoice.campaign_id
+    campaign = db.query(Campaign).filter_by(id=campaign_id).with_for_update().populate_existing().one()
+    invoice = db.query(Invoice).filter_by(id=part.invoice_id).with_for_update().populate_existing().one()
+    part = db.query(PayoutInstallment).filter_by(id=part.id).with_for_update().populate_existing().one()
+    line = db.query(BudgetLine).filter_by(id=invoice.budget_line_id).with_for_update().populate_existing().one()
+    db.expire(invoice, ["installments", "payout"])
+    if part.status in {"success", "failed"}:
+        db.commit()
+        return
     if response.get("simulated") or (part.paypal_batch_id or "").startswith("SANDBOX-"):
         part.status = "failed"
         invoice.status = "FAILED"
         invoice.ai_summary = (invoice.ai_summary or "") + "\nPayout was simulated; no vendor received funds."
-        db.commit()
         audit.log(db, actor="system", action="payout.simulated", campaign_id=invoice.campaign_id,
-                  invoice_id=invoice.id, detail={"installment_id": part.id})
+                  invoice_id=invoice.id, detail={"installment_id": part.id}, commit=False)
+        db.commit()
         return
     header = response.get("batch_header", {})
     part.paypal_batch_id = header.get("payout_batch_id") or part.paypal_batch_id
@@ -51,18 +59,25 @@ def _apply_status(db: Session, part: PayoutInstallment, response: dict) -> None:
     else:
         part.status = "pending"
         invoice.status = "PAYOUT_PENDING"
-    db.commit()
     audit.log(db, actor="system", action=f"payout.{part.status}", campaign_id=invoice.campaign_id,
               invoice_id=invoice.id, detail={"installment_id": part.id, "amount": part.amount,
-                                             "paypal_batch_id": part.paypal_batch_id})
+                                             "paypal_batch_id": part.paypal_batch_id}, commit=False)
+    db.commit()
 
 
 async def pay_available(db: Session, invoice: Invoice, paypal: PayPalClient) -> None:
     """Reconcile a pending transfer, then send at most the unreserved balance."""
+    # Lock in the same order for allocation, reconciliation and approval.
+    campaign = db.query(Campaign).filter_by(id=invoice.campaign_id).with_for_update().populate_existing().one()
+    invoice = db.query(Invoice).filter_by(id=invoice.id).with_for_update().populate_existing().one()
+    db.expire(invoice, ["installments", "verifications", "payout"])
     if not any(v.decision in {"approve", "test_override"} for v in invoice.verifications):
+        db.commit()
         return
     pending = next((p for p in invoice.installments if p.status == "pending"), None)
     if pending:
+        # The persisted reservation and key survive while the external request runs.
+        db.commit()
         if pending.paypal_batch_id:
             try:
                 result = await paypal.get_payout_status(pending.paypal_batch_id)
@@ -70,38 +85,49 @@ async def pay_available(db: Session, invoice: Invoice, paypal: PayPalClient) -> 
             except PayPalError:
                 return
         else:
-            # Reuse the exact sender_batch_id when a previous response was lost.
             await _send_part(db, pending, paypal)
-        if pending.status == "pending":
+        if pending.status != "success":
             return
-    if invoice.status == "FAILED":
+        await pay_available(db, invoice, paypal)
         return
-    campaign = db.query(Campaign).filter_by(id=invoice.campaign_id).with_for_update().one()
+    if invoice.status in {"FAILED", "PAID", "VERIFIER_REJECTED", "REJECTED"}:
+        db.commit()
+        return
     reserved = db.query(func.coalesce(func.sum(PayoutInstallment.amount), 0.0)).join(Invoice).filter(
         Invoice.campaign_id == campaign.id, PayoutInstallment.status == "pending"
     ).scalar()
     remaining = round(invoice.amount - paid_amount(invoice), 2)
-    available = round(campaign.pool_balance - float(reserved), 2)
+    simulated = db.query(func.coalesce(func.sum(Donation.amount), 0.0)).filter(
+        Donation.campaign_id == campaign.id, Donation.source == "simulated", Donation.status == "captured"
+    ).scalar()
+    available = round(campaign.pool_balance - float(simulated) - float(reserved), 2)
     amount = min(remaining, available)
     if amount < 0.01:
         invoice.status = _status(invoice)
         db.commit()
         return
-    vendor = db.get(Vendor, invoice.vendor_id)
+    vendor = db.query(Vendor).filter_by(id=invoice.vendor_id).populate_existing().one_or_none()
+    line = db.query(BudgetLine).filter_by(id=invoice.budget_line_id).populate_existing().one()
+    if not math.isfinite(invoice.amount) or invoice.amount <= 0:
+        invoice.status = "FAILED"
+        db.commit()
+        return
     test_override = any(v.decision == "test_override" for v in invoice.verifications)
-    if vendor is None or (not test_override and vendor.status != "active") or vendor.payout_email.casefold() != invoice.payout_email.casefold():
+    if (vendor is None or (not test_override and vendor.status != "active") or vendor.payout_email.strip().casefold() != invoice.payout_email.strip().casefold()
+            or vendor.campaign_id != campaign.id or line.campaign_id != campaign.id
+            or (not test_override and (campaign.status != "active" or line.vendor_id != vendor.id
+                or invoice.currency != campaign.currency or amount > round(line.budgeted_amount - line.paid_amount, 2)))):
         invoice.status = "FAILED"
         db.commit()
         return
     part = PayoutInstallment(invoice_id=invoice.id, amount=amount, currency=invoice.currency,
-                             sender_batch_id=f"pending-{invoice.id}-{len(invoice.installments) + 1}")
+                             sender_batch_id=f"straightmoney-{uuid.uuid4().hex}")
     db.add(part)
     db.flush()
-    part.sender_batch_id = f"straightmoney-installment-{part.id}"
     invoice.status = "PAYOUT_PENDING"
-    db.commit()
     audit.log(db, actor="system", action="payout.installment_pending", campaign_id=invoice.campaign_id,
-              invoice_id=invoice.id, detail={"installment_id": part.id, "amount": amount})
+              invoice_id=invoice.id, detail={"installment_id": part.id, "amount": amount}, commit=False)
+    db.commit()
     await _send_part(db, part, paypal)
 
 
@@ -110,14 +136,23 @@ async def _send_part(db: Session, part: PayoutInstallment, paypal: PayPalClient)
     vendor = invoice.vendor
     try:
         result = await paypal.create_payout(invoice_id=invoice.id, installment_id=part.id,
-            amount=part.amount, currency=invoice.currency, payout_email=invoice.payout_email, vendor_name=vendor.name)
+            amount=part.amount, currency=invoice.currency, payout_email=invoice.payout_email, vendor_name=vendor.name, sender_batch_id=part.sender_batch_id)
         part.paypal_batch_id = result.get("batch_header", {}).get("payout_batch_id")
         _apply_status(db, part, result)
         if part.status == "pending" and part.paypal_batch_id:
             _apply_status(db, part, await paypal.get_payout_status(part.paypal_batch_id))
     except PayPalError as exc:
+        db.rollback()
+        db.query(Campaign).filter_by(id=invoice.campaign_id).with_for_update().populate_existing().one()
+        invoice = db.query(Invoice).filter_by(id=invoice.id).with_for_update().populate_existing().one()
+        part = db.query(PayoutInstallment).filter_by(id=part.id).with_for_update().populate_existing().one()
+        if part.status in {"success", "failed"}:
+            db.commit()
+            return
         # A network error may follow an accepted request. Keep its idempotency key reserved.
-        if exc.status_code == 503 and part.paypal_batch_id is None:
+        if part.paypal_batch_id or exc.status_code >= 500 or "DUPLICATE_BATCH_ID" in str(exc.body):
+            part.status = "pending"
+            invoice.status = "PAYOUT_PENDING"
             invoice.ai_summary = (invoice.ai_summary or "") + "\nPayout status uncertain; check PayPal before retrying."
         else:
             part.status = "failed"
@@ -127,12 +162,12 @@ async def _send_part(db: Session, part: PayoutInstallment, paypal: PayPalClient)
                 "PayPal Payouts are unavailable for this sandbox sender account's country. "
                 "No funds were sent. Use a Payouts-enabled sandbox Business account "
                 "from a supported sending country before retrying."
-                if payout_unavailable else f"Payout failed: {exc}"
+                if payout_unavailable else "Payout request was rejected by PayPal. Check account configuration before retrying."
             )
             invoice.ai_summary = (invoice.ai_summary or "") + f"\n{message}"
-        db.commit()
         audit.log(db, actor="system", action="payout.request_error", campaign_id=invoice.campaign_id,
-                  invoice_id=invoice.id, detail={"installment_id": part.id, "error": str(exc)})
+                  invoice_id=invoice.id, detail={"installment_id": part.id, "error": str(exc)}, commit=False)
+        db.commit()
 
 
 async def pay_campaign(db: Session, campaign_id: int, paypal: PayPalClient) -> None:

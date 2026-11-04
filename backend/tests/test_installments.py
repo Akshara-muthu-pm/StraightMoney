@@ -194,6 +194,9 @@ async def test_verifier_request_returns_when_paypal_stalls(monkeypatch):
     async def stalled_payment(*args):
         await asyncio.sleep(1)
 
+    from models import StoredFile
+    db.add(StoredFile(invoice_id=invoice.id, kind="proof", filename="proof.png", mime_type="image/png", data=b"fixture"))
+    db.commit()
     monkeypatch.setattr(main, "pay_available", stalled_payment)
     monkeypatch.setattr(main, "_PAYOUT_WAIT_SECONDS", 0.01)
     result = await main.approve_invoice(invoice.id, VerificationCreate(verifier_name="Reviewer"), db)
@@ -209,6 +212,8 @@ async def test_async_payout_surfaces_paypal_restriction(monkeypatch):
     from payments import PayPalClient, PayPalError
     from unittest.mock import AsyncMock
     client = PayPalClient()
+    monkeypatch.setattr(client, "_client_id", "test-id")
+    monkeypatch.setattr(client, "_client_secret", "test-secret")
     monkeypatch.setattr(client, "_auth_headers", AsyncMock(return_value={"Authorization": "Bearer TEST"}))
 
     async def restricted_post(self, url, **kwargs):
