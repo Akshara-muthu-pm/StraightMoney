@@ -25,9 +25,9 @@ export const mockCampaign: Campaign = {
 };
 
 export const mockDonations: Donation[] = [
-  { id: 1, campaign_id: 1, donor_name: "Alice Johnson", amount: 500, currency: "USD", paypal_order_id: "DEMO-ORDER-001", status: "captured", created_at: "2026-10-29T11:00:00Z" },
-  { id: 2, campaign_id: 1, donor_name: "Bob Smith", amount: 400, currency: "USD", paypal_order_id: "DEMO-ORDER-002", status: "captured", created_at: "2026-10-29T12:00:00Z" },
-  { id: 3, campaign_id: 1, donor_name: "Carol Davis", amount: 300, currency: "USD", paypal_order_id: "DEMO-ORDER-003", status: "captured", created_at: "2026-10-29T13:00:00Z" },
+  { id: 1, campaign_id: 1, donor_name: "Alice Johnson", amount: 500, currency: "USD", paypal_order_id: "DEMO-ORDER-001", source: "simulated", status: "captured", created_at: "2026-10-29T11:00:00Z" },
+  { id: 2, campaign_id: 1, donor_name: "Bob Smith", amount: 400, currency: "USD", paypal_order_id: "DEMO-ORDER-002", source: "simulated", status: "captured", created_at: "2026-10-29T12:00:00Z" },
+  { id: 3, campaign_id: 1, donor_name: "Carol Davis", amount: 300, currency: "USD", paypal_order_id: "DEMO-ORDER-003", source: "simulated", status: "captured", created_at: "2026-10-29T13:00:00Z" },
 ];
 
 export const mockInvoices: Invoice[] = [
@@ -60,5 +60,5 @@ export const mockInvoices: Invoice[] = [
 
 export const mockLedger: LedgerEntry[] = mockDonations.map((donation) => ({
   type: "donation", amount: donation.amount, actor_name: donation.donor_name,
-  status: donation.status, created_at: donation.created_at, proof_url: null,
+    status: donation.status, source: donation.source, created_at: donation.created_at, proof_url: null,
 }));

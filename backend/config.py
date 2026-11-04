@@ -6,6 +6,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
 
 
 REPO_ENV = Path(__file__).resolve().parent.parent / ".env"
@@ -21,6 +22,9 @@ class Settings(BaseSettings):
     paypal_base_url: str = "https://api-m.sandbox.paypal.com"
     paypal_simulate_payouts: bool = False
     enable_verifier_test_override: bool = True  # temporary; sandbox only
+    allow_simulated_donations: bool = False
+    max_donation_amount: float = Field(default=5000, gt=0, allow_inf_nan=False)
+    verifier_key: str = ""
 
     # LLM (Gemini)
     llm_api_key: str = ""

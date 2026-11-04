@@ -8,11 +8,90 @@ const steps = [
 ];
 
 export default function FundsJourney() {
-  return <section id="how-it-works" className="section-space border-b border-slate-200" aria-labelledby="journey-title">
-    <div className="funds-journey-layout">
-      <div className="funds-journey-intro"><p className="eyebrow">Care in every step</p><h2 id="journey-title" className="display-heading mt-4 text-4xl sm:text-5xl">How funds reach<br />the people doing the work.</h2><p className="mt-6 text-base leading-8 text-slate-700">Your donation enters the campaign pool. Vendors submit invoices and delivery evidence against a published budget. A human verifier reviews the work before approved funds go directly to the vendor.</p><div className="funds-journey-principle mt-7"><span aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M12 3 3 7v6c0 5 9 9 9 9s9-4 9-9V7l-9-4Z M8 12l3 3 5-6" /></svg></span><p className="text-sm leading-7 text-brand-900">A clear budget.<br /><strong>A person reviewing the work.</strong><br />A record you can follow.</p></div><Link href="#campaigns" className="button-secondary mt-7">Follow a campaign’s journey</Link></div>
-      <ol className="funds-timeline" aria-label="Four steps from donation to confirmed vendor payment">{steps.map((step) => <li key={step.number} className="funds-timeline-step"><span className="funds-timeline-node" aria-hidden="true">{step.number}</span><article className="surface-card funds-step-card"><div className="funds-step-heading"><span className="funds-step-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d={step.icon} /></svg></span><div><p className="text-xs font-semibold text-brand-800">{step.role}</p><h3 className="mt-1 text-xl font-bold text-slate-900">{step.title}</h3></div></div><p className="mt-4 text-base leading-8 text-slate-700">{step.text}</p><p className="mt-3 border-t border-slate-200 pt-3 text-sm leading-7 text-slate-600">{step.detail}</p></article></li>)}</ol>
-    </div>
-    <aside className="funds-payment-note mt-8" aria-labelledby="approval-payment-title"><div><p className="eyebrow">Two separate milestones</p><h3 id="approval-payment-title" className="mt-2 text-xl font-bold text-brand-950">Approval comes before payment.</h3><p className="mt-3 text-sm leading-7 text-slate-700">An approved invoice may still be waiting for available funds or payment confirmation. The record shows “paid” only after the transfer is confirmed.</p></div><div className="funds-milestones"><span><strong>Approved</strong><small>Review decision</small></span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M4 12h15m-5-5 5 5-5 5" /></svg><span><strong>Paid</strong><small>Confirmed transfer</small></span></div></aside>
-  </section>;
+  return (
+    <section id="how-it-works" className="section-space border-b border-slate-200/70" aria-labelledby="journey-title">
+      <div className="funds-journey-layout">
+        <div className="funds-journey-intro">
+          <div className="inline-flex items-center gap-2 text-xs font-extrabold uppercase tracking-widest text-[#003087]">
+            <span className="h-1.5 w-1.5 rounded-full bg-[#0070BA]" />
+            Care in every step
+          </div>
+          <h2 id="journey-title" className="mt-4 text-4xl font-extrabold tracking-tight text-[#001435] sm:text-5xl">
+            How funds reach<br />the people doing the work.
+          </h2>
+          <p className="mt-6 text-base leading-relaxed text-slate-600">
+            Your donation enters the campaign escrow vault. Vendors submit invoices and delivery evidence against published budget lines. Gemini AI checks OCR and compliance, and a human verifier reviews the evidence before approved payouts disburse directly to vendor accounts.
+          </p>
+          <div className="funds-journey-principle mt-8 shadow-sm">
+            <span aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                <path d="M12 3 3 7v6c0 5 9 9 9 9s9-4 9-9V7l-9-4Z M8 12l3 3 5-6" />
+              </svg>
+            </span>
+            <p className="text-xs leading-relaxed text-[#003087]">
+              A published budget.<br />
+              <strong>A verified person checking the proof.</strong><br />
+              An immutable ledger you can inspect.
+            </p>
+          </div>
+          <Link href="#campaigns" className="button-secondary mt-8 shadow-sm text-xs">
+            Follow a campaign’s journey &rarr;
+          </Link>
+        </div>
+
+        <ol className="funds-timeline" aria-label="Four steps from donation to confirmed vendor payment">
+          {steps.map((step) => (
+            <li key={step.number} className="funds-timeline-step">
+              <span className="funds-timeline-node" aria-hidden="true">
+                {step.number}
+              </span>
+              <article className="liquid-glass funds-step-card shadow-md">
+                <div className="funds-step-heading">
+                  <span className="funds-step-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                      <path d={step.icon} />
+                    </svg>
+                  </span>
+                  <div>
+                    <p className="text-[11px] font-black uppercase tracking-wider text-[#003087]">{step.role}</p>
+                    <h3 className="mt-0.5 text-lg font-extrabold text-[#001435]">{step.title}</h3>
+                  </div>
+                </div>
+                <p className="mt-3 text-xs leading-relaxed text-slate-600">{step.text}</p>
+                <p className="mt-3 border-t border-slate-100/80 pt-3 text-[11px] leading-relaxed text-slate-500 font-medium">{step.detail}</p>
+              </article>
+            </li>
+          ))}
+        </ol>
+      </div>
+
+      <aside className="funds-payment-note mt-12" aria-labelledby="approval-payment-title">
+        <div>
+          <div className="inline-flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wider text-[#003087]">
+            <span className="h-1.5 w-1.5 rounded-full bg-[#0070BA]" />
+            Two Separate Milestones
+          </div>
+          <h3 id="approval-payment-title" className="mt-2 text-xl font-extrabold text-[#001435]">
+            Approval comes before payment.
+          </h3>
+          <p className="mt-2 text-xs leading-relaxed text-slate-600">
+            An approved invoice may still be waiting for escrow funds or PayPal batch settlement. The record shows &ldquo;paid&rdquo; only after PayPal Payouts returns a verified SUCCESS response.
+          </p>
+        </div>
+        <div className="funds-milestones">
+          <span>
+            <strong className="block text-sm font-black text-[#001435]">Approved</strong>
+            <small>Review decision</small>
+          </span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+            <path d="M4 12h15m-5-5 5 5-5 5" />
+          </svg>
+          <span className="border-emerald-200/80 bg-emerald-50/60">
+            <strong className="block text-sm font-black text-emerald-900">Paid</strong>
+            <small className="text-emerald-700/80">Confirmed transfer</small>
+          </span>
+        </div>
+      </aside>
+    </section>
+  );
 }

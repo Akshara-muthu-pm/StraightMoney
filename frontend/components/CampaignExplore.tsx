@@ -27,7 +27,60 @@ export default function CampaignExplore() {
       {loading && <p role="status" className="surface-card p-6">Loading community campaigns...</p>}
       {error && <div role="alert" className="surface-card p-6"><p>{error}</p><button type="button" className="button-secondary mt-4" onClick={() => { setLoading(true); setError(""); setRetry((value) => value + 1); }}>Try again</button></div>}
       {!loading && !error && campaigns.length === 0 && <p className="surface-card p-6">New community campaigns will appear here when they are published.</p>}
-      <div className="space-y-6">{campaigns.map((campaign, index) => <article className="surface-card grid overflow-hidden lg:grid-cols-[0.9fr_1.1fr]" key={campaign.id}><div className="relative min-h-72 bg-brand-100"><Image src={campaignImagery(campaign.title).src} alt={campaignImagery(campaign.title).alt} fill sizes="(max-width: 1024px) 100vw, 45vw" className="object-cover" /><span className="photo-label">Illustrative photo / not project evidence</span></div><div className="p-6 sm:p-9"><div className="flex items-center justify-between gap-4"><p className="eyebrow">{index === 0 ? "Featured community campaign" : "Community campaign"}</p><StatusBadge status={campaign.status} /></div><h3 className="display-heading mt-4 text-4xl">{campaign.title}</h3><p className="mt-4 text-sm leading-7 text-slate-600">{campaign.description}</p><p className="mt-3 text-xs text-slate-500">Organized by {campaign.organizer_name}</p><div className="mt-6"><ProgressBar current={totalFunded(campaign)} goal={campaign.goal_amount} /><p className="mt-3 text-sm"><strong>{money(totalFunded(campaign), campaign.currency)}</strong> funded of {money(campaign.goal_amount, campaign.currency)}</p><p className="mt-1 text-xs text-slate-500">Includes available funds and completed vendor payouts.</p></div><div className="mt-6 flex flex-wrap gap-3"><Link href={`/campaigns/${campaign.id}#campaign-story`} className="button-primary">Read the story</Link><Link href={`/campaigns/${campaign.id}#donate`} className="button-secondary">Donate</Link><Link href={`/ledger/${campaign.id}`} className="inline-flex items-center p-2 text-sm font-semibold text-brand-800 underline">Public ledger</Link></div></div></article>)}</div>
+      <div className="space-y-6">
+        {campaigns.map((campaign, index) => (
+          <article
+            className="surface-card grid items-stretch overflow-hidden lg:grid-cols-[0.9fr_1.1fr]"
+            key={campaign.id}
+          >
+            <div className="relative min-h-[300px] w-full bg-brand-100">
+              <Image
+                src={campaignImagery(campaign.title).src}
+                alt={campaignImagery(campaign.title).alt}
+                fill
+                sizes="(max-width: 1024px) 100vw, 45vw"
+                className="object-cover"
+              />
+              <span className="photo-label">Illustrative photo / not project evidence</span>
+            </div>
+            <div className="flex flex-col justify-between p-6 sm:p-9">
+              <div>
+                <div className="flex items-center justify-between gap-4">
+                  <p className="text-xs font-extrabold uppercase tracking-widest text-[#003087]">
+                    {index === 0 ? "Featured community campaign" : "Community campaign"}
+                  </p>
+                  <StatusBadge status={campaign.status} />
+                </div>
+                <h3 className="mt-4 text-3xl font-extrabold tracking-tight text-[#001435] sm:text-4xl">
+                  {campaign.title}
+                </h3>
+                <p className="mt-3 text-sm leading-relaxed text-slate-600">{campaign.description}</p>
+                <p className="mt-2 text-xs font-medium text-slate-500">
+                  Organized by <strong className="text-slate-800">{campaign.organizer_name}</strong>
+                </p>
+                <div className="mt-6">
+                  <ProgressBar current={totalFunded(campaign)} goal={campaign.goal_amount} />
+                  <p className="mt-3 text-xs text-slate-600">
+                    <strong className="text-sm font-black text-[#001435]">{money(totalFunded(campaign), campaign.currency)}</strong> funded of {money(campaign.goal_amount, campaign.currency)}
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-slate-500">Includes available escrow funds and completed vendor payouts.</p>
+                </div>
+              </div>
+              <div className="mt-8 flex flex-wrap items-center gap-3 border-t border-slate-100/80 pt-5">
+                <Link href={`/campaigns/${campaign.id}#campaign-story`} className="button-primary text-xs">
+                  Read the story
+                </Link>
+                <Link href={`/campaigns/${campaign.id}#donate`} className="button-secondary text-xs">
+                  Donate
+                </Link>
+                <Link href={`/ledger/${campaign.id}`} className="inline-flex items-center gap-1 p-2 text-xs font-bold text-[#003087] hover:text-[#0070BA] underline">
+                  Public ledger &rarr;
+                </Link>
+              </div>
+            </div>
+          </article>
+        ))}
+      </div>
     </section>
     {featured && <ProjectUpdates key={featured.id} campaignId={featured.id} />}
   </>;

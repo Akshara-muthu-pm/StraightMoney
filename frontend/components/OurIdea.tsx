@@ -1,4 +1,4 @@
-﻿import Link from "next/link";
+import Link from "next/link";
 import Image from "next/image";
 
 const steps = [
@@ -9,18 +9,78 @@ const steps = [
 ];
 
 export default function OurIdea() {
-  return <section id="our-idea" className="section-space border-b border-slate-200" aria-labelledby="idea-title">
-    <div className="idea-flow-intro">
-      <div><p className="eyebrow">Our idea. Our purpose.</p><h2 id="idea-title" className="display-heading mt-4 text-4xl sm:text-5xl">Bring generosity<br />and <em className="text-brand-700">accountability</em><br />into the same story.</h2><p className="mt-6 max-w-lg text-base leading-8 text-slate-700">Our goal is to help communities fund meaningful projects while giving supporters a clear view of how the money is used.</p><p className="mt-4 max-w-lg text-base leading-8 text-slate-700">StraightMoney connects the campaign budget, invoice review, vendor payments, and public spending record in one place. The giving journey continues after checkout, through the work and the payments that follow.</p><Link href="#campaigns" className="button-primary mt-7">Find a project to follow</Link></div>
-      <div className="idea-flow-photos">
-        <figure className="surface-card relative overflow-hidden"><Image src="/images/idea-community.jpg" alt="Four people standing together at sunset" fill sizes="(max-width: 767px) 100vw, 45vw" className="object-cover" /><figcaption className="idea-flow-photo-caption">People coming together.</figcaption></figure>
-        <figure className="surface-card relative overflow-hidden"><Image src="/images/idea-partnership.jpg" alt="Two people shaking hands in partnership" fill sizes="(max-width: 767px) 70vw, 30vw" className="object-cover" /><figcaption className="idea-flow-photo-caption">Partnership behind the progress.</figcaption></figure>
-        <p className="text-xs text-slate-600">Illustrative community and partnership photography.</p>
+  return (
+    <section id="our-idea" className="section-space border-b border-slate-200/70" aria-labelledby="idea-title">
+      <div className="idea-flow-intro">
+        <div>
+          <div className="inline-flex items-center gap-2 text-xs font-extrabold uppercase tracking-widest text-[#003087]">
+            <span className="h-1.5 w-1.5 rounded-full bg-[#0070BA]" />
+            Our idea &middot; Our purpose
+          </div>
+          <h2 id="idea-title" className="mt-4 text-4xl font-extrabold tracking-tight text-[#001435] sm:text-5xl">
+            Bring generosity<br />and <span className="bg-gradient-to-r from-[#003087] to-[#0070BA] bg-clip-text text-transparent">accountability</span><br />into the same story.
+          </h2>
+          <p className="mt-6 max-w-lg text-base leading-relaxed text-slate-600">
+            Our goal is to help communities fund meaningful projects while giving supporters an absolute guarantee that funds are only disbursed directly to verified vendors for completed work.
+          </p>
+          <p className="mt-4 max-w-lg text-sm leading-relaxed text-slate-500">
+            StraightMoney connects published budgets, invoice reviews, automated Gemini checks, and immutable public ledger records in one place. Organizers never take custody of cash.
+          </p>
+          <Link href="#campaigns" className="button-primary mt-8 shadow-md shadow-blue-900/15">
+            Find a project to follow &rarr;
+          </Link>
+        </div>
+        <div className="idea-flow-photos">
+          <figure className="liquid-glass relative overflow-hidden shadow-lg">
+            <Image src="/images/idea-community.jpg" alt="Four people standing together at sunset" fill sizes="(max-width: 767px) 100vw, 45vw" className="object-cover" />
+            <figcaption className="idea-flow-photo-caption">People coming together.</figcaption>
+          </figure>
+          <figure className="liquid-glass relative overflow-hidden shadow-xl">
+            <Image src="/images/idea-partnership.jpg" alt="Two people shaking hands in partnership" fill sizes="(max-width: 767px) 70vw, 30vw" className="object-cover" />
+            <figcaption className="idea-flow-photo-caption">Partnership behind the progress.</figcaption>
+          </figure>
+          <p className="text-[11px] text-slate-400">Illustrative community and partnership photography.</p>
+        </div>
       </div>
-    </div>
-    <div className="mt-12"><p className="eyebrow">One connected journey</p><h3 className="display-heading mt-3 text-3xl sm:text-4xl">What makes our approach different</h3>
-      <ol className="idea-flow-grid mt-7" aria-label="From project planning to public spending records">{steps.map((step, index) => <li className="idea-flow-step" key={step.phase}><article className="surface-card idea-flow-card"><div className="idea-flow-symbol" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d={step.path} /></svg></div><p className="mt-5 text-xs font-bold uppercase tracking-widest text-brand-800">0{index + 1} / {step.phase}</p><h4 className="mt-3 text-lg font-bold leading-7 text-slate-900">{step.title}</h4><p className="mt-3 text-sm leading-7 text-slate-700">{step.text}</p></article>{index < steps.length - 1 && <span className="idea-flow-connector" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12h15m-5-5 5 5-5 5" /></svg></span>}</li>)}</ol>
-    </div>
-    <p className="mt-6 text-sm leading-7 text-slate-700"><strong className="font-semibold text-brand-900">The principle behind StraightMoney:</strong> make the plan visible, review the work, and keep the spending traceable.</p>
-  </section>;
+
+      <div className="mt-16">
+        <div className="inline-flex items-center gap-2 text-xs font-extrabold uppercase tracking-widest text-[#003087]">
+          <span className="h-1.5 w-1.5 rounded-full bg-[#009CDE]" />
+          One connected journey
+        </div>
+        <h3 className="mt-2 text-3xl font-extrabold tracking-tight text-[#001435] sm:text-4xl">
+          What makes our approach different
+        </h3>
+        <ol className="idea-flow-grid mt-8" aria-label="From project planning to public spending records">
+          {steps.map((step, index) => (
+            <li className="idea-flow-step" key={step.phase}>
+              <article className="liquid-glass idea-flow-card">
+                <div className="idea-flow-symbol" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                    <path d={step.path} />
+                  </svg>
+                </div>
+                <p className="mt-5 text-[11px] font-black uppercase tracking-widest text-[#003087]">
+                  0{index + 1} / {step.phase}
+                </p>
+                <h4 className="mt-2.5 text-base font-extrabold leading-snug text-[#001435]">{step.title}</h4>
+                <p className="mt-2.5 text-xs leading-relaxed text-slate-600">{step.text}</p>
+              </article>
+              {index < steps.length - 1 && (
+                <span className="idea-flow-connector" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M4 12h15m-5-5 5 5-5 5" />
+                  </svg>
+                </span>
+              )}
+            </li>
+          ))}
+        </ol>
+      </div>
+
+      <div className="mt-8 rounded-2xl border border-blue-200/80 bg-blue-50/60 p-4 backdrop-blur-md text-xs leading-relaxed text-[#003087]">
+        <strong className="font-extrabold">The core StraightMoney guarantee:</strong> Make the plan public before checkout, review vendor delivery evidence with Gemini AI, and disburse exclusively through PayPal Payouts.
+      </div>
+    </section>
+  );
 }

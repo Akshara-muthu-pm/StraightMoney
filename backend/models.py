@@ -94,7 +94,9 @@ class Donation(Base):
     amount = Column(Float, nullable=False)
     currency = Column(String, nullable=False)
     paypal_order_id = Column(String, unique=True, nullable=False)
-    status = Column(String, default="created", nullable=False)  # created | captured | voided
+    source = Column(String, default="paypal", nullable=False)  # paypal | simulated
+    status = Column(String, default="created", nullable=False)  # created | pending | captured | failed
+    paypal_capture_status = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     # Relationships

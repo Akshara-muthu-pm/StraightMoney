@@ -23,6 +23,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     response = await fetch(`${API_URL}${path}`, { ...init, signal: init?.signal ?? AbortSignal.timeout(180000) });
   } catch (cause) {
+    if (path.includes("/donations") || path.endsWith("/donate")) {
+      throw new Error(`Could not reach the donation API at ${API_URL}. Make sure the backend is running. If you already approved a PayPal payment, check the public ledger before trying again.`);
+    }
     if (cause instanceof Error && cause.name === "TimeoutError") {
       throw new Error("The API took too long to respond. Refresh the invoice before trying again; the payment may still be pending.");
     }
@@ -49,10 +52,10 @@ export const api = {
   getLedger: async (campaignId: number): Promise<LedgerEntry[]> => USE_MOCKS ? mockLedger : request<LedgerEntry[]>(`/campaigns/${campaignId}/ledger`),
   assetUrl: (path: string | null): string | null => path && !USE_MOCKS ? `${API_URL}/${path.replace(/^\//, "")}` : null,
   createCampaign: (data: CampaignCreate): Promise<Campaign> => USE_MOCKS ? Promise.resolve(mockCampaign) : request<Campaign>("/campaigns", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) }),
-  createDonation: (campaignId: number, donor_name: string, amount: number, simulate: boolean = false): Promise<Donation> => USE_MOCKS ? Promise.resolve({ id: 99, campaign_id: campaignId, donor_name, amount, currency: "USD", paypal_order_id: `MOCK-ORDER-${Date.now()}`, status: "created", created_at: new Date().toISOString() }) : request<Donation>(`/campaigns/${campaignId}/donations`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ donor_name, amount, simulate }) }),
-  captureDonation: (orderId: string): Promise<Donation> => USE_MOCKS ? Promise.resolve({ id: 99, campaign_id: 1, donor_name: "Demo Donor", amount: 0, currency: "USD", paypal_order_id: orderId, status: "captured", created_at: new Date().toISOString() }) : request<Donation>(`/donations/${orderId}/capture`, { method: "POST" }),
+  createDonation: (campaignId: number, donor_name: string, amount: number, simulate: boolean = false): Promise<Donation> => USE_MOCKS ? Promise.resolve({ id: 99, campaign_id: campaignId, donor_name, amount, currency: "USD", paypal_order_id: `MOCK-ORDER-${Date.now()}`, source: simulate ? "simulated" : "paypal", status: "created", created_at: new Date().toISOString() }) : request<Donation>(`/campaigns/${campaignId}/donations`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ donor_name, amount, simulate }) }),
+  captureDonation: (orderId: string): Promise<Donation> => USE_MOCKS ? Promise.resolve({ id: 99, campaign_id: 1, donor_name: "Demo Donor", amount: 0, currency: "USD", paypal_order_id: orderId, source: "paypal", status: "captured", created_at: new Date().toISOString() }) : request<Donation>(`/donations/${orderId}/capture`, { method: "POST" }),
   uploadInvoice: (form: FormData): Promise<Invoice> => USE_MOCKS ? Promise.resolve(mockInvoices[0]) : request<Invoice>("/invoices", { method: "POST", body: form }),
-  approveInvoice: (id: number, data: VerificationRequest): Promise<Invoice> => USE_MOCKS ? Promise.resolve(mockInvoices[0]) : request<Invoice>(`/invoices/${id}/approve`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) }),
-  rejectInvoice: (id: number, data: VerificationRequest): Promise<Invoice> => USE_MOCKS ? Promise.resolve(mockInvoices[0]) : request<Invoice>(`/invoices/${id}/reject`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) }),
-  retryInvoice: (id: number, data: VerificationRequest): Promise<Invoice> => USE_MOCKS ? Promise.resolve(mockInvoices[0]) : request<Invoice>(`/invoices/${id}/retry`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) }),
+  approveInvoice: (id: number, data: VerificationRequest, verifierKey: string): Promise<Invoice> => USE_MOCKS ? Promise.resolve(mockInvoices[0]) : request<Invoice>(`/invoices/${id}/approve`, { method: "POST", headers: { "Content-Type": "application/json", "X-Verifier-Key": verifierKey }, body: JSON.stringify(data) }),
+  rejectInvoice: (id: number, data: VerificationRequest, verifierKey: string): Promise<Invoice> => USE_MOCKS ? Promise.resolve(mockInvoices[0]) : request<Invoice>(`/invoices/${id}/reject`, { method: "POST", headers: { "Content-Type": "application/json", "X-Verifier-Key": verifierKey }, body: JSON.stringify(data) }),
+  retryInvoice: (id: number, data: VerificationRequest, verifierKey: string): Promise<Invoice> => USE_MOCKS ? Promise.resolve(mockInvoices[0]) : request<Invoice>(`/invoices/${id}/retry`, { method: "POST", headers: { "Content-Type": "application/json", "X-Verifier-Key": verifierKey }, body: JSON.stringify(data) }),
 };

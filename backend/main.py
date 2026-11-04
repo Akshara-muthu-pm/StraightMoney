@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import secrets
 import os
 import shutil
 import uuid
@@ -23,6 +24,7 @@ from fastapi import (
     FastAPI,
     File,
     Form,
+    Header,
     HTTPException,
     UploadFile,
     status,
@@ -143,6 +145,11 @@ _ALLOWED_MIME_TYPES = {
     "image/png",
     "image/webp",
 }
+
+
+def require_verifier_key(x_verifier_key: str | None = Header(default=None, alias="X-Verifier-Key")) -> None:
+    if not settings.verifier_key or not x_verifier_key or not secrets.compare_digest(x_verifier_key, settings.verifier_key):
+        raise HTTPException(status_code=401, detail="Invalid verifier key.")
 
 
 def _invoice_to_detail(inv: Invoice) -> InvoiceDetail:
@@ -271,10 +278,15 @@ async def create_donation(
     if campaign.status != "active":
         raise HTTPException(status_code=400, detail="Donations are only accepted for active campaigns.")
 
-    if payload.simulate or not paypal.is_configured:
+    if payload.simulate and not settings.allow_simulated_donations:
+        raise HTTPException(status_code=403, detail="Simulated donations are disabled.")
+
+    if payload.simulate:
         order_id = f"SANDBOX-SIM-ORDER-{uuid.uuid4().hex[:10].upper()}"
         is_simulated = True
     else:
+        if not paypal.is_configured:
+            raise HTTPException(status_code=503, detail="PayPal Sandbox checkout is not configured.")
         try:
             order = await paypal.create_order(
                 campaign_id=campaign_id,
@@ -293,6 +305,7 @@ async def create_donation(
         amount=payload.amount,
         currency=campaign.currency,
         paypal_order_id=order_id,
+        source="simulated" if is_simulated else "paypal",
         status="created",
     )
     db.add(donation)
@@ -313,6 +326,38 @@ async def create_donation(
 # ---------------------------------------------------------------------------
 
 
+def _paypal_capture_status(capture_data: dict) -> str:
+    """Use the payment capture status, not the enclosing order status."""
+    try:
+        value = capture_data["purchase_units"][0]["payments"]["captures"][0]["status"]
+        return value if isinstance(value, str) and value else "UNKNOWN"
+    except (KeyError, IndexError, TypeError):
+        return "UNKNOWN"
+
+
+def _store_capture_result(db: Session, order_id: str, capture_data: dict) -> tuple[Donation, Campaign | None, bool]:
+    """Store the PayPal result and credit a completed capture once."""
+    donation = (db.query(Donation).filter_by(paypal_order_id=order_id)
+                .with_for_update().populate_existing().one())
+    if donation.status == "captured":
+        return donation, None, False
+
+    capture_status = _paypal_capture_status(capture_data)
+    donation.paypal_capture_status = capture_status
+    campaign = None
+    credited = capture_status == "COMPLETED"
+    if credited:
+        campaign = (db.query(Campaign).filter_by(id=donation.campaign_id)
+                    .with_for_update().populate_existing().one())
+        campaign.pool_balance += donation.amount
+        donation.status = "captured"
+    else:
+        donation.status = "pending" if capture_status == "PENDING" else "failed"
+    db.commit()
+    db.refresh(donation)
+    return donation, campaign, credited
+
+
 @router.post("/donations/{order_id}/capture", response_model=DonationCaptureOut)
 async def capture_donation(order_id: str, db: Session = Depends(get_db)):
     """
@@ -325,17 +370,28 @@ async def capture_donation(order_id: str, db: Session = Depends(get_db)):
     if donation is None:
         raise HTTPException(status_code=404, detail=f"Donation with PayPal order '{order_id}' not found.")
     if donation.status == "captured":
-        raise HTTPException(status_code=409, detail="Donation already captured.")
+        return DonationCaptureOut(
+            **DonationOut.model_validate(donation).model_dump(),
+            paypal_capture_details=None,
+        )
+    if donation.status == "failed":
+        raise HTTPException(status_code=409, detail="Donation capture failed; create a new order.")
 
-    if not paypal.is_configured or order_id.startswith("SANDBOX-"):
+    if donation.source == "simulated":
+        if not settings.allow_simulated_donations:
+            raise HTTPException(status_code=403, detail="Simulated donations are disabled.")
         capture_data = {
             "id": order_id,
             "status": "COMPLETED",
+            "purchase_units": [{"payments": {"captures": [{"status": "COMPLETED"}]}}],
             "simulated": True,
         }
     else:
+        if not paypal.is_configured:
+            raise HTTPException(status_code=503, detail="PayPal Sandbox checkout is not configured.")
         try:
-            capture_data = await paypal.capture_order(order_id)
+            capture_data = (await paypal.get_order(order_id) if donation.status == "pending"
+                            else await paypal.capture_order(order_id))
         except PayPalError as exc:
             body_str = json.dumps(exc.body) if isinstance(exc.body, (dict, list)) else str(exc.body)
             if "ORDER_NOT_APPROVED" in body_str:
@@ -355,21 +411,16 @@ async def capture_donation(order_id: str, db: Session = Depends(get_db)):
             else:
                 raise HTTPException(status_code=502, detail=f"PayPal error: {exc.body}")
 
-    donation.status = "captured"
-    campaign = db.get(Campaign, donation.campaign_id)
-    if campaign:
-        campaign.pool_balance += donation.amount
-
-    db.commit()
-    db.refresh(donation)
+    donation, campaign, credited = _store_capture_result(db, order_id, capture_data)
     audit.log(
         db,
         actor=donation.donor_name,
-        action="donation.captured",
+        action=f"donation.{donation.status}",
         campaign_id=donation.campaign_id,
-        detail={"amount": donation.amount, "new_pool_balance": campaign.pool_balance if campaign else None},
+        detail={"amount": donation.amount, "paypal_capture_status": donation.paypal_capture_status,
+                "new_pool_balance": campaign.pool_balance if campaign else None},
     )
-    if campaign:
+    if credited and campaign:
         await pay_campaign(db, campaign.id, paypal)
     return DonationCaptureOut(
         **DonationOut.model_validate(donation).model_dump(),
@@ -655,7 +706,7 @@ async def _pay_with_deadline(db: Session, invoice: Invoice) -> None:
         db.expire_all()
 
 
-@router.post("/invoices/{invoice_id}/approve", response_model=InvoiceDetail)
+@router.post("/invoices/{invoice_id}/approve", response_model=InvoiceDetail, dependencies=[Depends(require_verifier_key)])
 async def approve_invoice(
     invoice_id: int,
     payload: VerificationCreate,
@@ -729,7 +780,7 @@ async def approve_invoice(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/invoices/{invoice_id}/reject", response_model=InvoiceDetail)
+@router.post("/invoices/{invoice_id}/reject", response_model=InvoiceDetail, dependencies=[Depends(require_verifier_key)])
 def reject_invoice(
     invoice_id: int,
     payload: VerificationCreate,
@@ -768,7 +819,7 @@ def reject_invoice(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/invoices/{invoice_id}/retry", response_model=InvoiceDetail)
+@router.post("/invoices/{invoice_id}/retry", response_model=InvoiceDetail, dependencies=[Depends(require_verifier_key)])
 async def retry_invoice(
     invoice_id: int,
     payload: VerificationCreate,
@@ -829,6 +880,7 @@ def get_ledger(campaign_id: int, db: Session = Depends(get_db)):
                 amount=d.amount,
                 actor_name=d.donor_name,
                 status=d.status,
+                source=d.source,
                 created_at=d.created_at,
                 proof_url=None,
             )

@@ -2,7 +2,9 @@
 db.py — SQLAlchemy engine, session factory, base class, and FastAPI dependency.
 """
 
-from sqlalchemy import create_engine
+from pathlib import Path
+
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from config import settings
@@ -28,9 +30,14 @@ def get_db():
 
 
 def init_db() -> None:
-    """Create all PostgreSQL tables at startup."""
+    """Create tables and apply the additive migrations needed by older databases."""
     # Import models so SQLAlchemy picks up all mapped classes before create_all
     import models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    if engine.dialect.name == "postgresql":
+        migration_dir = Path(__file__).resolve().parent / "migrations"
+        with engine.begin() as connection:
+            for name in ("001_donation_capture_status.sql", "002_donation_source.sql"):
+                connection.execute(text((migration_dir / name).read_text(encoding="utf-8")))
 

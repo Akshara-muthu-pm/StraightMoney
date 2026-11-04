@@ -405,6 +405,7 @@ class PayPalClient:
             return {
                 "id": order_id,
                 "status": "COMPLETED",
+                "purchase_units": [{"payments": {"captures": [{"status": "COMPLETED"}]}}],
                 "simulated": True,
             }
 
@@ -417,6 +418,17 @@ class PayPalClient:
             return _handle_response(resp, endpoint=url, method="POST")
         except httpx.RequestError as exc:
             raise PayPalError(503, body={"error": "network_error", "message": str(exc)}, endpoint=url, method="POST") from exc
+
+    async def get_order(self, order_id: str) -> dict[str, Any]:
+        """Read a previously captured order without sending another capture request."""
+        headers = await self._auth_headers()
+        url = f"{self._base_url}/v2/checkout/orders/{order_id}"
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.get(url, headers=headers)
+            return _handle_response(resp, endpoint=url, method="GET")
+        except httpx.RequestError as exc:
+            raise PayPalError(503, body={"error": "network_error", "message": str(exc)}, endpoint=url, method="GET") from exc
 
     async def create_payout(
         self,

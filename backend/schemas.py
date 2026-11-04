@@ -7,7 +7,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from config import settings
 
 
 # ---------------------------------------------------------------------------
@@ -116,8 +118,15 @@ class DonationCreate(BaseModel):
     """Payload to initiate a donation (creates a PayPal order)."""
 
     donor_name: str
-    amount: float
+    amount: float = Field(gt=0, allow_inf_nan=False)
     simulate: bool = False
+
+    @field_validator("amount")
+    @classmethod
+    def check_maximum(cls, value: float) -> float:
+        if value > settings.max_donation_amount:
+            raise ValueError(f"Donation amount cannot exceed {settings.max_donation_amount:g}.")
+        return value
 
 
 class DonationOut(BaseModel):
@@ -132,6 +141,8 @@ class DonationOut(BaseModel):
     currency: str
     paypal_order_id: str
     status: str
+    source: str
+    paypal_capture_status: Optional[str] = None
     created_at: datetime
 
 
@@ -274,6 +285,7 @@ class LedgerEntry(BaseModel):
     amount: float
     actor_name: str
     status: str
+    source: Optional[str] = None
     created_at: datetime
     proof_url: Optional[str] = None
 

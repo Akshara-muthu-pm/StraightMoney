@@ -27,12 +27,52 @@ export default function LedgerPage() {
   }, [id]);
 
   const total = (type: string, status: string) => entries.filter((item) => item.type === type && item.status === status).reduce((sum, item) => sum + item.amount, 0);
-  return <main id="main-content" tabIndex={-1} className="mx-auto max-w-6xl px-5 py-10">
-    <p className="text-sm font-semibold uppercase tracking-[0.2em] text-brand-700">Public record</p>
-    <div className="mt-2 mb-8 flex flex-wrap items-end justify-between gap-4"><div><h1 className="text-4xl font-bold">Transparency ledger</h1><p className="mt-2 text-slate-600">{campaign?.title ?? "Campaign"} · donations in and vendor payouts out</p></div><Link href="/" className="text-sm font-semibold text-brand-700 hover:underline">← Back to campaign</Link></div>
-    {!Number.isInteger(id) || id < 1 ? <p role="alert" className="rounded bg-red-50 p-4 text-red-900">Invalid campaign ID.</p> : null}
-    {loading && <p role="status">Loading ledger…</p>}
-    {error && <p role="alert" className="rounded bg-red-50 p-4 text-red-900">{error}</p>}
-    {!loading && !error && campaign && <><div className="mb-6 grid gap-4 sm:grid-cols-3">{[["Donations captured", `$${total("donation", "captured").toFixed(2)}`], ["Vendor payouts", `$${total("payout", "success").toFixed(2)}`], ["Ledger entries", String(entries.length)]].map(([label, value]) => <div key={label} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-sm text-slate-500">{label}</p><p className="mt-1 text-2xl font-bold">{value}</p></div>)}</div><div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><LedgerGrid entries={entries} /></div>{USE_MOCKS && <p className="mt-4 text-xs text-slate-500">Demo data for the UI preview.</p>}</>}
-  </main>;
+  return (
+    <main id="main-content" tabIndex={-1} className="page-width py-12">
+      <div className="flex items-center gap-2">
+        <span className="h-2 w-2 rounded-full bg-[#0070BA] animate-pulse" />
+        <p className="text-xs font-extrabold uppercase tracking-widest text-[#003087]">Public Transparency Record</p>
+      </div>
+      <div className="mt-3 mb-8 flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="text-4xl font-extrabold tracking-tight text-[#001435]">Public Ledger</h1>
+          <p className="mt-2 text-xs font-medium text-slate-500">
+            {campaign?.title ?? "Campaign"} &middot; Captured PayPal donations in &amp; confirmed vendor disbursements out
+          </p>
+        </div>
+        <Link
+          href={campaign ? `/campaigns/${campaign.id}` : "/#campaigns"}
+          className="inline-flex items-center gap-1 text-xs font-bold text-[#003087] hover:text-[#0070BA] underline"
+        >
+          &larr; Back to campaign story
+        </Link>
+      </div>
+      {!Number.isInteger(id) || id < 1 ? <p role="alert" className="liquid-glass border-red-200 p-4 text-xs font-bold text-red-900">Invalid campaign ID.</p> : null}
+      {loading && <p role="status" className="liquid-glass p-6 text-xs text-slate-500">Loading ledger…</p>}
+      {error && <p role="alert" className="liquid-glass border-red-200 p-4 text-xs font-bold text-red-900">{error}</p>}
+      {!loading && !error && campaign && (
+        <>
+          <div className="mb-6 grid gap-4 sm:grid-cols-3">
+            {[
+              ["Donations captured", `$${total("donation", "captured").toFixed(2)}`, "#10B981"],
+              ["Vendor payouts", `$${total("payout", "success").toFixed(2)}`, "#0070BA"],
+              ["Ledger entries", String(entries.length), "#FFC439"]
+            ].map(([label, value, accent]) => (
+              <div key={label} className="liquid-glass p-5 flex flex-col justify-between h-full">
+                <div className="flex items-center justify-between">
+                  <p className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500">{label}</p>
+                  <span className="h-2 w-2 rounded-full" style={{ backgroundColor: accent }} />
+                </div>
+                <p className="mt-3 text-3xl font-black text-[#001435]">{value}</p>
+              </div>
+            ))}
+          </div>
+          <div className="liquid-glass p-5">
+            <LedgerGrid entries={entries} />
+          </div>
+          {USE_MOCKS && <p className="mt-4 text-xs text-slate-400">Demo data for the UI preview.</p>}
+        </>
+      )}
+    </main>
+  );
 }

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createDemoState, parseDemoState, toggleFollow, addReceipt, demoRoles } from "../lib/demo-state.ts";
 import { invoiceStages, totalFunded } from "../lib/presentation.ts";
+import { budgetSummary } from "../lib/budget.ts";
 import { campaignImagery } from "../lib/campaign-imagery.ts";
 import { impactShapes, interpolatePoints, shapePath } from "../lib/impact-motion.ts";
 import { releaseFrames, springResponse, tapFeedbackFrames } from "../lib/spring-motion.ts";
@@ -92,6 +93,21 @@ test("a partial payment or sandbox override cannot look fully paid", () => {
 test("rejected invoices do not appear approved", () => {
   assert.deepEqual(invoiceStages({ ...invoice, status: "REJECTED" }), { review: "Policy rejected", payment: "Not paid" });
   assert.deepEqual(invoiceStages({ ...invoice, status: "VERIFIER_REJECTED" }), { review: "Verifier rejected", payment: "Not paid" });
+});
+test("budget separates approved commitments from confirmed payouts", () => {
+  const line = { id: 1, budgeted_amount: 600, paid_amount: 100 };
+  const invoices = [
+    { id: 1, budget_line_id: 1, status: "PARTIALLY_PAID", amount: 400, paid_amount: 100, verifications: [] },
+    { id: 2, budget_line_id: 1, status: "REJECTED", amount: 120, paid_amount: 0, verifications: [] },
+    { id: 3, budget_line_id: 2, status: "VERIFIER_APPROVED", amount: 50, paid_amount: 0, verifications: [] },
+  ];
+  const summary = budgetSummary(line, invoices);
+  assert.equal(summary.planned, 600);
+  assert.equal(summary.approvedUnpaid, 300);
+  assert.equal(summary.paid, 100);
+  assert.equal(summary.remaining, 200);
+  assert.equal(summary.approvedCount, 1);
+  assert.equal(summary.invoices.length, 2);
 });
 test("following toggles without duplicates or changes to other projects", () => {
   const state = toggleFollow(toggleFollow(createDemoState("Donor", "Test"), 1), 2);
