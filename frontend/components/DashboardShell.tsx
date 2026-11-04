@@ -33,7 +33,7 @@ export default function DashboardShell({
             </span>
             <p className="text-xs font-black uppercase tracking-widest text-[#003087]">{role} Workspace</p>
           </div>
-          <h1 className="mt-4 text-3xl font-extrabold tracking-tight text-[#001435] sm:text-4xl">Role authorization required</h1>
+          <h1 className="mt-4 text-3xl font-extrabold tracking-tight text-[#001435] sm:text-4xl">Choose a demo role</h1>
           <p className="mt-3 text-xs leading-relaxed text-slate-600">
             Please switch to the <strong className="text-[#001435]">{role}</strong> role on the demo sign-in page to access this workspace and its tools.
           </p>

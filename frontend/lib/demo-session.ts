@@ -22,7 +22,10 @@ export function useDemoSession() {
   return useMemo(() => parseDemoState(raw), [raw]);
 }
 export function signInDemo(role: DemoRole, name: string) { save(createDemoState(role, name)); }
-export function signOutDemo() { save(null); }
+export function signOutDemo() {
+  save(null);
+  try { window.sessionStorage.removeItem("straightmoney-verifier-key"); } catch { /* Storage may be unavailable. */ }
+}
 export function followCampaign(id: number) { const state = parseDemoState(snapshot()); if (state) save(toggleFollow(state, id)); }
 export function recordReceipt(donation: Donation, title: string, mode: Receipt["mode"]) {
   const state = parseDemoState(snapshot());

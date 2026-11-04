@@ -20,7 +20,7 @@ export default function FundsJourney() {
             How funds reach<br />the people doing the work.
           </h2>
           <p className="mt-6 text-base leading-relaxed text-slate-600">
-            Your donation enters the campaign escrow vault. Vendors submit invoices and delivery evidence against published budget lines. Gemini AI checks OCR and compliance, and a human verifier reviews the evidence before approved payouts disburse directly to vendor accounts.
+            Your donation enters the campaign balance. Vendors submit invoices and delivery evidence against published budget lines. Python rules check policy and Gemini adds advisory flags, and a human verifier reviews the evidence before approved payouts disburse directly to vendor accounts.
           </p>
           <div className="funds-journey-principle mt-8 shadow-sm">
             <span aria-hidden="true">
@@ -30,7 +30,7 @@ export default function FundsJourney() {
             </span>
             <p className="text-xs leading-relaxed text-[#003087]">
               A published budget.<br />
-              <strong>A verified person checking the proof.</strong><br />
+              <strong>A human checking the proof.</strong><br />
               An immutable ledger you can inspect.
             </p>
           </div>
@@ -75,7 +75,7 @@ export default function FundsJourney() {
             Approval comes before payment.
           </h3>
           <p className="mt-2 text-xs leading-relaxed text-slate-600">
-            An approved invoice may still be waiting for escrow funds or PayPal batch settlement. The record shows &ldquo;paid&rdquo; only after PayPal Payouts returns a verified SUCCESS response.
+            An approved invoice may still be waiting for campaign funds or PayPal batch settlement. The record shows &ldquo;paid&rdquo; only after PayPal Payouts returns a verified SUCCESS response.
           </p>
         </div>
         <div className="funds-milestones">

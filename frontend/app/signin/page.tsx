@@ -65,7 +65,7 @@ export default function SignInPage() {
           Sign in to your role.
         </h2>
         <p className="mt-2 text-xs leading-relaxed text-slate-600">
-          Select a role to inspect the flow from donation to verified vendor disbursement. No password required for sandbox accounts.
+          Select a role to inspect the flow from donation to verified vendor disbursement. This selects a demo role; it does not sign in to PayPal.
         </p>
 
         <form onSubmit={submit} className="mt-7 space-y-5">

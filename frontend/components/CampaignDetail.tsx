@@ -86,7 +86,7 @@ export default function CampaignDetail({ id }: { id: number }) {
           
           <div className="liquid-glass p-6 sm:p-7">
             <ProgressBar current={campaign.pool_balance + campaign.budget_lines.reduce((total, line) => total + line.paid_amount, 0)} goal={campaign.goal_amount} />
-            <p className="mt-3 text-xs font-medium text-slate-500">Funding includes available escrow funds and verified vendor payouts.</p>
+            <p className="mt-3 text-xs font-medium text-slate-500">Funding includes available campaign funds and verified vendor payouts.</p>
             {simulatedCount > 0 && <p className="mt-2 text-xs font-semibold text-amber-900"><span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wide">SIMULATED</span> {simulatedCount} donation{simulatedCount === 1 ? "" : "s"} in this campaign used no PayPal payment.</p>}
             {ledgerError && <p role="status" className="mt-2 text-xs text-slate-500">Donation sources are unavailable. Check the public ledger later.</p>}
           </div>
@@ -96,7 +96,7 @@ export default function CampaignDetail({ id }: { id: number }) {
             <div className="relative">
               <div className="flex items-center gap-2">
                 <span className="h-2 w-2 rounded-full bg-[#009CDE] animate-pulse" />
-                <p className="text-xs font-extrabold uppercase tracking-widest text-[#BAE0FC]">Verified Escrow Pool</p>
+                <p className="text-xs font-extrabold uppercase tracking-widest text-[#BAE0FC]">Available campaign funds</p>
               </div>
               <div className="mt-6 grid gap-6 sm:grid-cols-2">
                 <div>
@@ -127,11 +127,11 @@ export default function CampaignDetail({ id }: { id: number }) {
         <aside id="donate" className="liquid-glass self-start p-6 sm:p-8">
           <div className="flex items-center justify-between gap-2">
             <p className="text-xs font-extrabold uppercase tracking-widest text-[#003087]">Support the campaign</p>
-            <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[10px] font-bold text-emerald-800">Direct Escrow</span>
+            <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[10px] font-bold text-emerald-800">Tracked payouts</span>
           </div>
           <h3 className="mt-2 text-2xl font-extrabold tracking-tight text-[#001435]">Make a donation</h3>
           <p className="mb-6 mt-2 text-xs leading-relaxed text-slate-600">
-            Donations go directly into locked campaign escrow. A verifier reviews vendor invoices and evidence before payouts are disbursed.
+            Donations go directly into the campaign balance. A verifier reviews vendor invoices and evidence before payouts are disbursed.
           </p>
           {campaign.status === "active" ? (
             <PayPalDonateButton key={campaign.id} campaignId={campaign.id} campaignTitle={campaign.title} currency={campaign.currency} onCaptured={refreshAfterCapture} />
@@ -162,7 +162,7 @@ export default function CampaignDetail({ id }: { id: number }) {
       <h2 id="questions-heading" className="text-2xl font-extrabold tracking-tight text-[#001435]">A little more clarity</h2>
       <div className="mt-4 divide-y divide-slate-200/80">
         {[
-          ["Where does my donation go?", "Donations enter the campaign escrow pool. Vendors receive payouts for approved invoices against the campaign budget; the organizer does not receive the payout."],
+          ["Where does my donation go?", "Donations enter the campaign balance. Vendors receive payouts for approved invoices against the campaign budget; the organizer does not receive the payout."],
           ["Who checks the spending?", "Policy checks review each invoice, and a human verifier reviews the invoice and delivery evidence before approving a payout."],
           ["Does this demo use real money?", "No. Checkout uses PayPal Sandbox test accounts. Simulated donations are separate demo actions, and frontend mock mode does not save donations."]
         ].map(([question, answer]) => (

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useSyncExternalStore, useCallback } from "react";
+import React, { createContext, useContext, useSyncExternalStore, useEffect } from "react";
 
 export type Theme = "light" | "dark" | "system";
 
@@ -13,6 +13,7 @@ export interface ThemeContextType {
 }
 
 const STORAGE_KEY = "straightmoney-theme";
+let volatileTheme: Theme = "system";
 
 function getStoredTheme(): Theme {
   if (typeof window === "undefined") return "system";
@@ -22,7 +23,7 @@ function getStoredTheme(): Theme {
       return val;
     }
   } catch {
-    // localStorage may be inaccessible in sandboxes
+    return volatileTheme; // Keep the control usable when storage is unavailable.
   }
   return "system";
 }
@@ -53,15 +54,12 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     (): Theme => "system"
   );
 
-  const getResolvedTheme = useCallback((): "light" | "dark" => {
-    if (typeof window === "undefined") return "light";
-    if (theme === "system") {
-      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-    }
-    return theme === "dark" ? "dark" : "light";
-  }, [theme]);
-
-  const resolvedTheme = getResolvedTheme();
+  const systemDark = useSyncExternalStore(
+    subscribeTheme,
+    () => window.matchMedia("(prefers-color-scheme: dark)").matches,
+    () => false,
+  );
+  const resolvedTheme = theme === "system" ? (systemDark ? "dark" : "light") : theme;
 
   const applyThemeToDOM = (targetTheme: "light" | "dark") => {
     if (typeof document === "undefined") return;
@@ -78,7 +76,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     try {
       localStorage.setItem(STORAGE_KEY, newTheme);
     } catch {
-      // localStorage may fail
+      volatileTheme = newTheme;
     }
     let target: "light" | "dark" = "light";
     if (newTheme === "system") {
@@ -89,6 +87,12 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     applyThemeToDOM(target);
     window.dispatchEvent(new Event("storage"));
   };
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.setAttribute("data-theme", resolvedTheme);
+    root.classList.toggle("dark", resolvedTheme === "dark");
+  }, [resolvedTheme]);
 
   const toggleTheme = () => {
     const nextTheme = resolvedTheme === "dark" ? "light" : "dark";

@@ -45,11 +45,12 @@ export default function PayPalDonateButton({
   const [capturing, setCapturing] = useState(false);
   const helpId = useId();
   const checkoutStartError = useRef<string | null>(null);
-  const maxDonationAmount = 100000;
+  const configuredMaximum = Number(process.env.NEXT_PUBLIC_MAX_DONATION_AMOUNT || 5000);
+  const maxDonationAmount = Number.isFinite(configuredMaximum) && configuredMaximum > 0 ? configuredMaximum : 5000;
   const numAmount = Number(amount);
   const valid = Boolean(name.trim()) && !Number.isNaN(numAmount) && numAmount >= 0.01 && numAmount <= maxDonationAmount;
-  const awaitingPayment = outcome?.kind === "pending";
-  const allowSimulation = true;
+  const awaitingPayment = outcome?.kind === "pending" || outcome?.kind === "uncertain";
+  const allowSimulation = process.env.NEXT_PUBLIC_ALLOW_SIMULATED_DONATIONS === "true";
 
   const completeOrder = async (orderId: string) => {
     setCapturing(true);
@@ -67,8 +68,10 @@ export default function PayPalDonateButton({
         setOutcome({ kind: "captured", amount: donation.amount, source: donation.source, refreshFailed });
       } else if (donation.status === "pending") {
         setOutcome({ kind: "pending", orderId });
+      } else if (donation.status === "failed") {
+        setOutcome({ kind: "failed", detail: "PayPal did not complete this donation. No funds were credited. You may start a new checkout." });
       } else {
-        setOutcome({ kind: "uncertain", orderId, detail: "Payment received by PayPal but not yet confirmed. You can check status below." });
+        setOutcome({ kind: "uncertain", orderId, detail: "Payment status is not yet confirmed. You can check status below." });
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Confirmation failed. Check status below.");
@@ -223,7 +226,7 @@ export default function PayPalDonateButton({
             </span>
             <div>
               <span className="block text-xs font-black text-[#001435] dark:text-white">PayPal Instant Checkout</span>
-              <span className="block text-[10px] font-semibold text-slate-500 dark:text-slate-400">Zero-custody verified escrow</span>
+              <span className="block text-[10px] font-semibold text-slate-500 dark:text-slate-400">Sandbox campaign checkout</span>
             </div>
           </div>
 
@@ -358,9 +361,9 @@ export default function PayPalDonateButton({
           <summary className="cursor-pointer py-0.5 font-bold text-[#003087] hover:text-[#0070BA] transition dark:text-sky-300 dark:hover:text-sky-200">
             Sandbox checkout test credentials
           </summary>
-          <div className="font-extrabold text-[#001435] dark:text-white pt-1">Live PayPal Sandbox Test Card:</div>
+          <div className="font-extrabold text-[#001435] dark:text-white pt-1">PayPal Sandbox Test Card:</div>
           <p className="leading-relaxed text-slate-600 dark:text-slate-300">
-            To test real card deduction: Click <strong>&ldquo;Debit or Credit Card&rdquo;</strong> and enter Test Card:{" "}
+            To test Sandbox checkout (no real card charge): Click <strong>&ldquo;Debit or Credit Card&rdquo;</strong> and enter Test Card:{" "}
             <code className="rounded-md border border-slate-200 bg-slate-100/80 px-1.5 py-0.5 font-mono text-[#001435] dark:border-white/10 dark:bg-slate-800 dark:text-amber-300">
               4012 8888 8888 1881
             </code>{" "}

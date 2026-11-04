@@ -79,7 +79,7 @@ function VerifierQueue() {
           autoComplete="off"
           value={keyInput}
           onChange={(event) => setKeyInput(event.target.value)}
-          placeholder={verifierKey ? "Key active (enter new key to replace)" : "Enter VERIFIER_KEY to enable approval actions"}
+          placeholder={verifierKey ? "Key saved (enter new key to replace)" : "Enter VERIFIER_KEY to enable approval actions"}
           className="mt-1.5 w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm font-medium text-[#001435] transition focus:border-[#0070BA] focus:outline-none focus:ring-2 focus:ring-[#0070BA]/20"
         />
       </label>
@@ -89,7 +89,7 @@ function VerifierQueue() {
       {verifierKey && (
         <p className="flex w-full items-center gap-1.5 text-xs font-bold text-emerald-700">
           <span className="h-2 w-2 rounded-full bg-emerald-500" />
-          Verifier authorization key is active in this tab&apos;s session.
+          Verifier key is saved in this tab&apos;s session.
         </p>
       )}
     </form>
