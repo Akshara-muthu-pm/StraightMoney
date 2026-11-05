@@ -12,12 +12,7 @@ export default function VerifierPage() {
   return <DashboardShell role="Verifier" title="Careful review. Clear outcomes." description="Start with the pending queue, inspect evidence and checks, then decide. Approval may still await funds or payment confirmation." steps={["Open queue", "Inspect evidence", "Decide", "Check payment"]}><VerifierQueue /></DashboardShell>;
 }
 function VerifierQueue() {
-  const [verifierKey, setVerifierKey] = useState("");
-  const [keyInput, setKeyInput] = useState("");
-  useEffect(() => {
-    const timer = window.setTimeout(() => setVerifierKey(window.sessionStorage.getItem("straightmoney-verifier-key") ?? ""), 0);
-    return () => window.clearTimeout(timer);
-  }, []);
+  const [issues, setIssues] = useState<Array<{ id: number; detail: string; reference: string | null }>>([]);
   const [campaigns, setCampaigns] = useState<CampaignSummary[]>([]);
   const [campaignId, setCampaignId] = useState<number | null>(null);
   const [status, setStatus] = useState("AWAITING_VERIFIER");
@@ -34,6 +29,7 @@ function VerifierQueue() {
 
   useEffect(() => {
     let active = true;
+    api.reconciliationIssues().then((items) => { if (active) setIssues(items); }).catch(() => {});
     api.listCampaigns().then((items) => {
       if (active) { setCampaigns(items); setCampaignId(items[0]?.id ?? null); setLoading(items.length > 0); }
     }).catch((cause: unknown) => {
@@ -71,28 +67,10 @@ function VerifierQueue() {
   }, [selectedId, detailKey]);
 
   return <div>
-    <form className="surface-card mb-6 flex flex-wrap items-end gap-3 p-6" onSubmit={(event) => { event.preventDefault(); const key = keyInput.trim(); if (!key) return; window.sessionStorage.setItem("straightmoney-verifier-key", key); setVerifierKey(key); setKeyInput(""); }}>
-      <label className="min-w-64 flex-1 text-xs font-bold uppercase tracking-wider text-slate-500">
-        Verifier Key (Session Auth)
-        <input
-          type="password"
-          autoComplete="off"
-          value={keyInput}
-          onChange={(event) => setKeyInput(event.target.value)}
-          placeholder={verifierKey ? "Key saved (enter new key to replace)" : "Enter VERIFIER_KEY to enable approval actions"}
-          className="mt-1.5 w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm font-medium text-[#001435] transition focus:border-[#0070BA] focus:outline-none focus:ring-2 focus:ring-[#0070BA]/20"
-        />
-      </label>
-      <button type="submit" className="button-primary">
-        {verifierKey ? "Update key" : "Save key for this tab"}
-      </button>
-      {verifierKey && (
-        <p className="flex w-full items-center gap-1.5 text-xs font-bold text-emerald-700">
-          <span className="h-2 w-2 rounded-full bg-emerald-500" />
-          Verifier key is saved in this tab&apos;s session.
-        </p>
-      )}
-    </form>
+    {issues.length > 0 && <section role="alert" className="mb-6 rounded-2xl border border-amber-300 bg-amber-50 p-5 text-xs text-amber-950">
+      <h2 className="text-sm font-bold">Payment records needing reconciliation</h2>
+      <ul className="mt-2 list-inside list-disc space-y-1">{issues.map((item) => <li key={item.id}>{item.reference ? `${item.reference}: ` : ""}{item.detail}</li>)}</ul>
+    </section>}
     {lastOutcome && (
       <section role="status" className="liquid-glass mb-6 p-6">
         <h2 className="mb-4 text-base font-extrabold text-[#001435]">Decision recorded: {lastOutcome.invoice_number}</h2>
@@ -164,9 +142,29 @@ function VerifierQueue() {
       </div>
     )}
     {!loading && !error && invoices.length === 0 && (
-      <p className="liquid-glass p-6 text-xs text-slate-500">
-        No invoices match this queue. Choose &ldquo;All invoices&rdquo; to inspect other review and payment states.
-      </p>
+      <div className="liquid-glass my-6 flex flex-col items-center justify-center p-10 sm:p-14 text-center">
+        <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-gradient-to-br from-[#003087]/15 to-[#0070BA]/20 text-[#003087] shadow-inner ring-1 ring-blue-200/60 dark:from-sky-950/40 dark:to-blue-900/40 dark:text-[#38bdf8] dark:ring-white/10">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+            <polyline points="22 4 12 14.01 9 11.01" />
+          </svg>
+        </div>
+        <h3 className="mt-5 text-xl font-extrabold tracking-tight text-[#001435] dark:text-white">
+          Verifier Queue is Clear
+        </h3>
+        <p className="mt-2 max-w-md text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+          No invoices currently match the <span className="font-bold text-[#003087] dark:text-[#38bdf8]">&ldquo;{status ? status.replace(/_/g, " ").toLowerCase() : "all"}&rdquo;</span> filter. All compliance checks have been processed or are awaiting vendor submission.
+        </p>
+        {status ? (
+          <button
+            type="button"
+            onClick={() => { setLoading(true); setStatus(""); }}
+            className="button-secondary mt-6 text-xs font-bold"
+          >
+            Switch to &ldquo;All invoices&rdquo; &rarr;
+          </button>
+        ) : null}
+      </div>
     )}
     {invoices.length > 0 && (
       <div className="mb-6 flex flex-wrap gap-2.5">
@@ -192,18 +190,11 @@ function VerifierQueue() {
     )}
     {detailLoading && !error && <p role="status" className="text-xs text-slate-500">Loading invoice details…</p>}
     {!loading && !detailLoading && !error && invoice && invoices.some((item) => item.id === invoice.id) && (
-      verifierKey ? (
-        <VerifierReview
-          key={`${invoice.id}-${refreshKey}`}
-          invoice={invoice}
-          verifierKey={verifierKey}
-          onChanged={(updated) => { setLastOutcome(updated); setLoading(true); setRefreshKey((key) => key + 1); }}
-        />
-      ) : (
-        <div role="status" className="liquid-glass rounded-2xl p-6 text-xs font-semibold text-amber-900 border-amber-200 bg-amber-50/80">
-          Enter the verifier authorization key above to review, approve, or reject invoices.
-        </div>
-      )
+      <VerifierReview
+        key={`${invoice.id}-${refreshKey}`}
+        invoice={invoice}
+        onChanged={(updated) => { setLastOutcome(updated); setLoading(true); setRefreshKey((key) => key + 1); }}
+      />
     )}
   </div>;
 }

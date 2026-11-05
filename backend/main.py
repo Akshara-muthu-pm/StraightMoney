@@ -9,14 +9,16 @@ payout triggering, and the public ledger.
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import json
 import hashlib
 import math
 from decimal import Decimal
-import secrets
 import os
 import tempfile
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
@@ -27,15 +29,16 @@ from fastapi import (
     FastAPI,
     File,
     Form,
-    Header,
     HTTPException,
     UploadFile,
+    Request,
+    Response,
     status,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
-from sqlalchemy import text
+from sqlalchemy import or_, text
 
 import audit
 import advisory as advisory_module
@@ -44,12 +47,15 @@ from config import settings
 from db import get_db, init_db, SessionLocal
 from models import (
     StoredFile,
+    AuditLog,
     PayoutInstallment,
     BudgetLine,
     Campaign,
     Check,
     Donation,
+    DeliveryCloseout,
     Invoice,
+    PaymentAdjustment,
     Payout,
     Vendor,
     Verification,
@@ -60,22 +66,31 @@ from policy import run_policy_checks
 from schemas import (
     AdvisoryResult,
     CampaignCreate,
+    CampaignCancellation,
     CampaignDetail,
     CampaignOut,
     DonationCaptureOut,
     DonationCreate,
     DonationCreateOut,
     DonationOut,
+    DeliveryReport,
+    DeliveryAcceptance,
+    DeliveryCloseoutOut,
     ExtractionResult,
     InvoiceDetail,
     InvoiceOut,
     LedgerEntry,
+    LedgerQuestion,
+    LedgerAnswer,
     VerificationCreate,
     VerificationOut,
 )
 from seed import seed_demo_data
 from uploads import read_upload, validate_content, file_response
 from guards import UploadSizeLimit
+from auth import router as auth_router, require_organizer, require_vendor, require_verifier
+from reconciliation import process_webhook
+from finance import record_refund_total, record_refund_request
 
 # ---------------------------------------------------------------------------
 # App bootstrap
@@ -192,11 +207,6 @@ async def on_startup() -> None:
 
 paypal = PayPalClient()
 
-def require_verifier_key(x_verifier_key: str | None = Header(default=None, alias="X-Verifier-Key")) -> None:
-    if not settings.verifier_key or not x_verifier_key or not secrets.compare_digest(x_verifier_key.encode(), settings.verifier_key.encode()):
-        raise HTTPException(status_code=401, detail="Invalid verifier key.")
-
-
 def _invoice_to_detail(inv: Invoice) -> InvoiceDetail:
     return InvoiceDetail.model_validate(inv)
 
@@ -255,15 +265,16 @@ def _recheck_approval(db: Session, invoice: Invoice) -> None:
 # ---------------------------------------------------------------------------
 
 
-@router.post("/campaigns", response_model=CampaignDetail, status_code=201)
-def create_campaign(payload: CampaignCreate, db: Session = Depends(get_db)):
+@router.post("/campaigns", response_model=CampaignDetail, status_code=201, dependencies=[Depends(require_organizer)])
+def create_campaign(payload: CampaignCreate, db: Session = Depends(get_db), request: Request = None):
     """Create a new fundraising campaign with optional vendors and budget lines."""
     campaign = Campaign(
         title=payload.title,
         description=payload.description,
         goal_amount=payload.goal_amount,
         currency=payload.currency,
-        organizer_name=payload.organizer_name,
+        organizer_name=request.state.actor.name if request is not None else payload.organizer_name,
+        organizer_user_id=request.state.actor.id if request is not None else None,
         status="active",
         pool_balance=0.0,
     )
@@ -334,6 +345,100 @@ def list_campaigns(db: Session = Depends(get_db)):
     """Return a summary list of all campaigns."""
     campaigns = db.query(Campaign).order_by(Campaign.created_at.desc()).all()
     return [CampaignOut.model_validate(c) for c in campaigns]
+
+
+@router.post("/campaigns/{campaign_id}/cancel", response_model=CampaignDetail, dependencies=[Depends(require_organizer)])
+def cancel_campaign(campaign_id: int, payload: CampaignCancellation, request: Request, db: Session = Depends(get_db)):
+    campaign = db.query(Campaign).filter_by(id=campaign_id).with_for_update().one_or_none()
+    if campaign is None or campaign.organizer_user_id != request.state.actor.id:
+        raise HTTPException(404, "Campaign not found in your workspace.")
+    if campaign.status != "active":
+        raise HTTPException(409, "Only an active campaign can be cancelled.")
+    pending = db.query(PayoutInstallment).join(Invoice).filter(
+        Invoice.campaign_id == campaign_id, PayoutInstallment.status == "pending").first()
+    legacy_pending = db.query(Payout).join(Invoice).filter(
+        Invoice.campaign_id == campaign_id, Payout.status == "pending").first()
+    if pending or legacy_pending:
+        raise HTTPException(409, "Wait for pending PayPal payouts to settle before cancelling.")
+    campaign.status = "closed"
+    campaign.cancellation_reason = payload.reason
+    campaign.cancelled_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    audit.log(db, actor=f"organizer:{request.state.actor.email}", action="campaign.cancelled",
+              campaign_id=campaign_id, detail={"reason": payload.reason}, commit=False)
+    db.commit()
+    db.refresh(campaign)
+    return CampaignDetail.model_validate(campaign)
+
+
+@router.get("/campaigns/{campaign_id}/donations", response_model=list[DonationOut], dependencies=[Depends(require_organizer)])
+def organizer_donations(campaign_id: int, request: Request, db: Session = Depends(get_db)):
+    campaign = db.get(Campaign, campaign_id)
+    if campaign is None or campaign.organizer_user_id != request.state.actor.id:
+        raise HTTPException(404, "Campaign not found in your workspace.")
+    return [DonationOut.model_validate(row) for row in db.query(Donation).filter_by(campaign_id=campaign_id).all()]
+
+
+@router.post("/donations/{donation_id}/refund", response_model=DonationOut, dependencies=[Depends(require_organizer)])
+async def refund_donation(donation_id: int, request: Request, db: Session = Depends(get_db)):
+    initial = db.get(Donation, donation_id)
+    if initial is None:
+        raise HTTPException(404, "Donation not found in your workspace.")
+    db.query(Campaign).filter_by(id=initial.campaign_id).with_for_update().populate_existing().one()
+    donation = db.query(Donation).filter_by(id=donation_id).with_for_update().populate_existing().one_or_none()
+    if donation is None or donation.campaign.organizer_user_id != request.state.actor.id:
+        raise HTTPException(404, "Donation not found in your workspace.")
+    if donation.campaign.status != "closed" or donation.source != "paypal" or donation.status != "captured":
+        raise HTTPException(409, "Only captured PayPal donations in a cancelled campaign can be refunded here.")
+    if donation.refund_processed:
+        return DonationOut.model_validate(donation)
+    confirmed_refund = db.query(PaymentAdjustment).filter_by(reference=f"capture:{donation.paypal_capture_id}").first() if donation.paypal_capture_id else None
+    if confirmed_refund and confirmed_refund.status == "completed" and confirmed_refund.amount >= donation.amount:
+        donation.refund_processed = True
+        db.commit()
+        return DonationOut.model_validate(donation)
+    if not donation.paypal_capture_id:
+        try:
+            order = await paypal.get_order(donation.paypal_order_id)
+            capture = order["purchase_units"][0]["payments"]["captures"][0]
+            if (order.get("id") != donation.paypal_order_id
+                    or Decimal(capture["amount"]["value"]) != Decimal(str(donation.amount))
+                    or capture["amount"]["currency_code"] != donation.currency):
+                raise ValueError("Order mismatch")
+            donation.paypal_capture_id = capture["id"]
+        except (PayPalError, KeyError, IndexError, TypeError, ValueError, ArithmeticError) as exc:
+            raise HTTPException(503, "Could not confirm the PayPal capture ID for this donation.") from exc
+    if not donation.refund_request_id:
+        previous = db.query(PaymentAdjustment).filter_by(reference=f"capture:{donation.paypal_capture_id}").first()
+        donation.refund_start_amount = previous.amount if previous and previous.status == "completed" else 0.0
+        donation.refund_request_id = f"straightmoney-refund-{donation.id}-{uuid.uuid4().hex}"
+    db.commit()  # Persist the idempotency key and release locks before the PayPal call.
+    try:
+        result = await paypal.refund_capture(donation.paypal_capture_id, donation.refund_request_id)
+        if not result.get("amount") and result.get("id"):
+            result = await paypal.get_refund(result["id"])
+    except PayPalError as exc:
+        raise HTTPException(503, "PayPal refund status is uncertain. Retry to reuse the same request ID.") from exc
+    amount = result.get("amount") or {}
+    try:
+        refund_amount = Decimal(str(amount["value"]))
+    except (KeyError, ValueError, ArithmeticError, TypeError) as exc:
+        raise HTTPException(502, "PayPal returned an incomplete refund amount; review its status before retrying.") from exc
+    if (result.get("status") not in {"COMPLETED", "PENDING"} or amount.get("currency_code") != donation.currency
+            or not refund_amount.is_finite() or refund_amount <= 0):
+        raise HTTPException(502, "PayPal did not confirm a matching refund. Review its status before retrying.")
+    total = Decimal(str(donation.refund_start_amount)) + refund_amount
+    if result["status"] == "COMPLETED":
+        row = record_refund_total(db, donation, total, "completed", f"capture:{donation.paypal_capture_id}")
+        db.query(PaymentAdjustment).filter_by(reference=f"refund-request:{donation.id}").delete()
+        donation.refund_processed = True
+        db.commit()
+    else:
+        row = record_refund_request(db, donation, refund_amount, "pending")
+    audit.log(db, actor=f"organizer:{request.state.actor.email}", action="donation.refund_requested",
+              campaign_id=donation.campaign_id, detail={"donation_id": donation.id, "refund_id": result.get("id"),
+                                                      "status": row.status})
+    db.refresh(donation)
+    return DonationOut.model_validate(donation)
 
 
 # ---------------------------------------------------------------------------
@@ -429,6 +534,12 @@ def _store_capture_result(db: Session, order_id: str, capture_data: dict) -> tup
     donation = (db.query(Donation).filter_by(paypal_order_id=order_id)
                 .with_for_update().populate_existing().one())
     if donation.status == "captured":
+        if not donation.paypal_capture_id and not capture_data.get("simulated"):
+            try:
+                donation.paypal_capture_id = capture_data["purchase_units"][0]["payments"]["captures"][0]["id"]
+                db.commit()
+            except (KeyError, IndexError, TypeError):
+                pass
         return donation, None, False
 
     capture_status = _paypal_capture_status(capture_data)
@@ -448,6 +559,8 @@ def _store_capture_result(db: Session, order_id: str, capture_data: dict) -> tup
             db.rollback()
             raise HTTPException(502, "PayPal capture amount, currency or order did not match; no funds were credited.") from exc
     if credited:
+        if not capture_data.get("simulated"):
+            donation.paypal_capture_id = capture.get("id")
         campaign = (db.query(Campaign).filter_by(id=donation.campaign_id)
                     .with_for_update().populate_existing().one())
         campaign.pool_balance = round(campaign.pool_balance + donation.amount, 2)
@@ -539,12 +652,22 @@ async def capture_donation(order_id: str, db: Session = Depends(get_db)):
     )
 
 
+@router.get("/donations/{order_id}/status")
+def donation_status(order_id: str, db: Session = Depends(get_db)):
+    donation = db.query(Donation).filter_by(paypal_order_id=order_id).first()
+    if donation is None:
+        raise HTTPException(404, "Donation not found.")
+    return {**DonationOut.model_validate(donation).model_dump(),
+            "adjustments": [{"kind": row.kind, "amount": row.amount, "status": row.status,
+                             "detail": row.detail} for row in donation.adjustments]}
+
+
 # ---------------------------------------------------------------------------
 # Endpoint 6 â€” Submit invoice  (POST /invoices)
 # ---------------------------------------------------------------------------
 
 
-@router.post("/invoices", response_model=InvoiceDetail, status_code=201)
+@router.post("/invoices", response_model=InvoiceDetail, status_code=201, dependencies=[Depends(require_vendor)])
 async def submit_invoice(
     campaign_id: int = Form(...),
     budget_line_id: int = Form(...),
@@ -554,6 +677,7 @@ async def submit_invoice(
     file: Optional[UploadFile] = File(None),
     proof_photo: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
+    request: Request = None,
 ):
     """
     Submit a vendor invoice for review.
@@ -575,11 +699,15 @@ async def submit_invoice(
         raise HTTPException(status_code=400, detail="Budget line has no assigned vendor.")
 
     vendor = _get_or_404(db, Vendor, vendor_id)
+    if request is not None and vendor.user_id != request.state.actor.id:
+        raise HTTPException(403, "This budget line is not assigned to your vendor account.")
 
     if budget_line.campaign_id != campaign_id:
         raise HTTPException(status_code=400, detail="Budget line does not belong to this campaign.")
     if vendor.campaign_id != campaign_id:
         raise HTTPException(status_code=400, detail="Vendor does not belong to this campaign.")
+    if budget_line.vendor_id != vendor.id:
+        raise HTTPException(status_code=403, detail="This vendor is not assigned to the budget line.")
 
     # --- Validate file ---
     actual_file = invoice_file or file
@@ -780,7 +908,7 @@ def get_invoice(invoice_id: int, db: Session = Depends(get_db)):
 @router.get("/campaigns/{campaign_id}/invoices", response_model=list[InvoiceOut])
 def list_invoices(campaign_id: int, db: Session = Depends(get_db)):
     """Return all invoices for a given campaign."""
-    _get_or_404(db, Campaign, campaign_id)
+    campaign = _get_or_404(db, Campaign, campaign_id)
     invoices = (
         db.query(Invoice)
         .filter_by(campaign_id=campaign_id)
@@ -788,6 +916,52 @@ def list_invoices(campaign_id: int, db: Session = Depends(get_db)):
         .all()
     )
     return [InvoiceOut.model_validate(inv) for inv in invoices]
+
+
+@router.post("/invoices/{invoice_id}/delivery", response_model=DeliveryCloseoutOut, dependencies=[Depends(require_vendor)])
+def report_delivery(invoice_id: int, payload: DeliveryReport, request: Request, db: Session = Depends(get_db)):
+    invoice = db.query(Invoice).filter_by(id=invoice_id).with_for_update().one_or_none()
+    if invoice is None or invoice.vendor.user_id != request.state.actor.id:
+        raise HTTPException(404, "Invoice not found in your assignments.")
+    if invoice.status != "PAID":
+        raise HTTPException(409, "Delivery closeout is available after full payout.")
+    if payload.delivered_at.replace(tzinfo=None) > datetime.now(timezone.utc).replace(tzinfo=None):
+        raise HTTPException(422, "Delivery date cannot be in the future.")
+    if invoice.delivery and invoice.delivery.accepted_at:
+        raise HTTPException(409, "Accepted delivery cannot be changed by the vendor.")
+    closeout = invoice.delivery or DeliveryCloseout(invoice_id=invoice.id, reported_by_user_id=request.state.actor.id)
+    closeout.delivered_description = payload.delivered_description
+    closeout.delivered_at = payload.delivered_at.replace(tzinfo=None)
+    closeout.status = "reported"
+    db.add(closeout)
+    audit.log(db, actor=f"vendor:{request.state.actor.email}", action="delivery.reported",
+              campaign_id=invoice.campaign_id, invoice_id=invoice.id,
+              detail={"delivered_description": payload.delivered_description}, commit=False)
+    db.commit()
+    db.refresh(closeout)
+    return DeliveryCloseoutOut.model_validate(closeout)
+
+
+@router.post("/invoices/{invoice_id}/delivery/accept", response_model=DeliveryCloseoutOut, dependencies=[Depends(require_organizer)])
+def accept_delivery(invoice_id: int, payload: DeliveryAcceptance, request: Request, db: Session = Depends(get_db)):
+    invoice = db.query(Invoice).filter_by(id=invoice_id).with_for_update().one_or_none()
+    if invoice is None or invoice.campaign.organizer_user_id != request.state.actor.id:
+        raise HTTPException(404, "Invoice not found in your campaign.")
+    closeout = invoice.delivery
+    if invoice.status != "PAID" or closeout is None:
+        raise HTTPException(409, "A paid invoice needs a vendor delivery report before acceptance.")
+    if closeout.accepted_at:
+        raise HTTPException(409, "Delivery was already accepted.")
+    closeout.accepted_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    closeout.accepted_by_user_id = request.state.actor.id
+    closeout.remaining_issue = payload.remaining_issue.strip() if payload.remaining_issue else None
+    closeout.status = "issues_open" if closeout.remaining_issue else "accepted"
+    audit.log(db, actor=f"organizer:{request.state.actor.email}", action="delivery.accepted",
+              campaign_id=invoice.campaign_id, invoice_id=invoice.id,
+              detail={"remaining_issue": closeout.remaining_issue}, commit=False)
+    db.commit()
+    db.refresh(closeout)
+    return DeliveryCloseoutOut.model_validate(closeout)
 
 
 # ---------------------------------------------------------------------------
@@ -829,11 +1003,12 @@ async def _pay_with_deadline(db: Session, invoice: Invoice) -> None:
         db.expire_all()
 
 
-@router.post("/invoices/{invoice_id}/approve", response_model=InvoiceDetail, dependencies=[Depends(require_verifier_key)])
+@router.post("/invoices/{invoice_id}/approve", response_model=InvoiceDetail, dependencies=[Depends(require_verifier)])
 async def approve_invoice(
     invoice_id: int,
     payload: VerificationCreate,
     db: Session = Depends(get_db),
+    request: Request = None,
 ):
     """
     Approve an invoice as a human verifier and trigger the vendor payout.
@@ -843,6 +1018,8 @@ async def approve_invoice(
     (or FAILED if PayPal returns an error).
     """
     invoice = _locked_invoice(db, invoice_id)
+    if request is not None and (invoice.campaign.organizer_user_id == request.state.actor.id or invoice.vendor.user_id == request.state.actor.id):
+        raise HTTPException(403, "A campaign participant cannot verify this invoice.")
     if payload.override_for_testing:
         if not settings.enable_verifier_test_override or settings.paypal_base_url.rstrip("/") != "https://api-m.sandbox.paypal.com":
             raise HTTPException(status_code=403, detail="Verifier test override is available only in PayPal Sandbox when enabled.")
@@ -858,7 +1035,7 @@ async def approve_invoice(
         original_email = invoice.payout_email
         invoice.payout_email = vendor.payout_email
         invoice.currency = campaign.currency
-        audit.log(db, actor=f"verifier:{payload.verifier_name}", action="invoice.sandbox_test_override",
+        audit.log(db, actor=f"verifier:{request.state.actor.name if request is not None else payload.verifier_name}", action="invoice.sandbox_test_override",
                   campaign_id=invoice.campaign_id, invoice_id=invoice.id,
                   detail={"reason": payload.note or "Sandbox payout test",
                           "bypassed_checks": [c.check_name for c in invoice.checks if not c.passed],
@@ -871,15 +1048,16 @@ async def approve_invoice(
     # Record verification decision
     verification = Verification(
         invoice_id=invoice_id,
-        verifier_name=payload.verifier_name,
+        verifier_name=request.state.actor.name if request is not None else payload.verifier_name,
         decision="test_override" if payload.override_for_testing else "approve",
         note=payload.note or ("Sandbox payout test" if payload.override_for_testing else None),
     )
     db.add(verification)
     audit.log(
         db,
-        actor=f"verifier:{payload.verifier_name}",
+        actor=f"verifier:{request.state.actor.name if request is not None else payload.verifier_name}",
         action="invoice.approved",
+        campaign_id=invoice.campaign_id,
         invoice_id=invoice_id,
         commit=False,
     )
@@ -905,11 +1083,12 @@ async def approve_invoice(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/invoices/{invoice_id}/reject", response_model=InvoiceDetail, dependencies=[Depends(require_verifier_key)])
+@router.post("/invoices/{invoice_id}/reject", response_model=InvoiceDetail, dependencies=[Depends(require_verifier)])
 def reject_invoice(
     invoice_id: int,
     payload: VerificationCreate,
     db: Session = Depends(get_db),
+    request: Request = None,
 ):
     """
     Reject an invoice as a human verifier.
@@ -917,11 +1096,13 @@ def reject_invoice(
     Only invoices in AWAITING_VERIFIER status can be rejected this way.
     """
     invoice = _locked_invoice(db, invoice_id)
+    if request is not None and (invoice.campaign.organizer_user_id == request.state.actor.id or invoice.vendor.user_id == request.state.actor.id):
+        raise HTTPException(403, "A campaign participant cannot verify this invoice.")
     _guard_invoice_status(invoice, "AWAITING_VERIFIER")
 
     verification = Verification(
         invoice_id=invoice_id,
-        verifier_name=payload.verifier_name,
+        verifier_name=request.state.actor.name if request is not None else payload.verifier_name,
         decision="reject",
         note=payload.note,
     )
@@ -929,7 +1110,7 @@ def reject_invoice(
     invoice.status = "VERIFIER_REJECTED"
     audit.log(
         db,
-        actor=f"verifier:{payload.verifier_name}",
+        actor=f"verifier:{request.state.actor.name if request is not None else payload.verifier_name}",
         action="invoice.verifier_rejected",
         invoice_id=invoice_id,
         commit=False,
@@ -945,11 +1126,12 @@ def reject_invoice(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/invoices/{invoice_id}/retry", response_model=InvoiceDetail, dependencies=[Depends(require_verifier_key)])
+@router.post("/invoices/{invoice_id}/retry", response_model=InvoiceDetail, dependencies=[Depends(require_verifier)])
 async def retry_invoice(
     invoice_id: int,
     payload: VerificationCreate,
     db: Session = Depends(get_db),
+    request: Request = None,
 ):
     """
     Retry a payout for an invoice in FAILED status.
@@ -958,6 +1140,8 @@ async def retry_invoice(
     re-triggers the PayPal payout.
     """
     invoice = _locked_invoice(db, invoice_id)
+    if request is not None and (invoice.campaign.organizer_user_id == request.state.actor.id or invoice.vendor.user_id == request.state.actor.id):
+        raise HTTPException(403, "A campaign participant cannot verify this invoice.")
     if invoice.status not in {"FAILED", "PAYOUT_PENDING", "PARTIALLY_PAID", "AWAITING_FUNDS"}:
         raise HTTPException(status_code=409, detail="Only failed or pending payouts can be checked or retried.")
 
@@ -993,7 +1177,7 @@ def get_ledger(campaign_id: int, db: Session = Depends(get_db)):
     Combines all captured donations and completed payouts in chronological
     order so that donors can see exactly how their money was spent.
     """
-    _get_or_404(db, Campaign, campaign_id)
+    campaign = _get_or_404(db, Campaign, campaign_id)
 
     entries: list[LedgerEntry] = []
 
@@ -1009,8 +1193,28 @@ def get_ledger(campaign_id: int, db: Session = Depends(get_db)):
                 source=d.source,
                 created_at=d.created_at,
                 proof_url=None,
+                donation_id=d.id,
             )
         )
+
+    if campaign.cancelled_at:
+        entries.append(LedgerEntry(type="campaign", amount=0, actor_name=campaign.organizer_name,
+            status="cancelled", created_at=campaign.cancelled_at, proof_url=None,
+            detail=campaign.cancellation_reason))
+
+    for donation in donations:
+        refund = next((row for row in donation.adjustments if row.kind == "refund" and row.status == "completed"), None)
+        refunded = min(donation.amount, refund.amount) if refund else 0.0
+        remaining_available = max(donation.amount - refunded, 0.0)
+        for row in sorted(donation.adjustments, key=lambda item: item.id):
+            if row.kind == "refund":
+                amount = -refunded if row.status == "completed" else 0.0
+            else:
+                amount = -min(remaining_available, row.amount) if row.status in {"open", "buyer_favor"} else 0.0
+                remaining_available += amount
+            entries.append(LedgerEntry(type=row.kind, amount=amount, actor_name=donation.donor_name,
+                status=row.status, source="paypal", created_at=row.updated_at or row.created_at,
+                proof_url=None, detail=row.detail, donation_id=donation.id))
 
     # One ledger entry per confirmed installment; include earlier single payouts.
     invoices = db.query(Invoice).filter_by(campaign_id=campaign_id).all()
@@ -1020,16 +1224,152 @@ def get_ledger(campaign_id: int, db: Session = Depends(get_db)):
         if inv.payout and inv.payout.status == "success":
             entries.append(LedgerEntry(type="payout", amount=inv.payout.amount,
                 actor_name=vendor.name if vendor else "Unknown Vendor", status="success",
-                created_at=inv.payout.created_at, proof_url=proof_url))
+                created_at=inv.payout.created_at, proof_url=proof_url, invoice_id=inv.id))
         for part in inv.installments:
             if part.status == "success":
                 entries.append(LedgerEntry(type="payout", amount=part.amount,
                     actor_name=vendor.name if vendor else "Unknown Vendor", status="success",
-                    created_at=part.created_at, proof_url=proof_url))
+                    created_at=part.created_at, proof_url=proof_url, invoice_id=inv.id))
+        if inv.delivery:
+            closeout = inv.delivery
+            entries.append(LedgerEntry(type="delivery", amount=0,
+                actor_name=vendor.name if vendor else "Unknown Vendor", status=closeout.status,
+                created_at=closeout.accepted_at or closeout.created_at, proof_url=proof_url,
+                invoice_id=inv.id,
+                detail=f"{closeout.delivered_description} Delivered {closeout.delivered_at.date().isoformat()}."
+                       + (f" Remaining issue: {closeout.remaining_issue}" if closeout.remaining_issue else "")))
 
     # Sort chronologically
     entries.sort(key=lambda e: e.created_at)
     return entries
+
+
+@router.get("/donations/{order_id}/updates")
+def donor_updates(order_id: str, db: Session = Depends(get_db)):
+    """Return saved campaign milestones to a donor holding their order ID."""
+    donation = db.query(Donation).filter_by(paypal_order_id=order_id).first()
+    if donation is None:
+        raise HTTPException(404, "Donation not found.")
+    if donation.status != "captured":
+        return []
+    campaign = db.get(Campaign, donation.campaign_id)
+    actions = {"invoice.approved", "payout.success", "delivery.accepted"}
+    invoice_ids = [invoice_id for (invoice_id,) in db.query(Invoice.id).filter_by(campaign_id=donation.campaign_id).all()]
+    rows = db.query(AuditLog).filter(AuditLog.action.in_(actions),
+        AuditLog.timestamp >= donation.created_at,
+        or_(AuditLog.campaign_id == donation.campaign_id, AuditLog.invoice_id.in_(invoice_ids))).order_by(AuditLog.id).all()
+    last_success_id: dict[int, int] = {}
+    for row in rows:
+        if row.action == "payout.success" and row.invoice_id is not None:
+            last_success_id[row.invoice_id] = row.id
+    updates = []
+    for row in rows:
+        invoice = db.get(Invoice, row.invoice_id) if row.invoice_id else None
+        if invoice is None or invoice.campaign_id != donation.campaign_id:
+            continue
+        if row.action == "payout.success":
+            try:
+                recorded_status = json.loads(row.detail or "{}").get("invoice_status")
+            except (ValueError, TypeError, AttributeError):
+                recorded_status = None
+            if recorded_status != "PAID" and not (
+                recorded_status is None and invoice.status == "PAID" and row.id == last_success_id.get(invoice.id)
+            ):
+                continue
+        line_name = invoice.budget_line.name
+        if row.action == "invoice.approved":
+            kind, title = "approved", f"{line_name} approved"
+            message = "An independent verifier approved the invoice for this budget line. Payment may still await available funds."
+        elif row.action == "payout.success":
+            kind, title = "paid", f"{line_name} paid"
+            message = "The vendor payout for this invoice was confirmed by PayPal."
+        else:
+            kind, title = "delivered", f"{line_name} delivery accepted"
+            issue = invoice.delivery.remaining_issue if invoice.delivery else None
+            message = f"The organizer accepted the delivered work. Remaining issue: {issue}" if issue else "The organizer accepted the delivered work."
+        updates.append({"id": row.id, "campaign_id": campaign.id, "campaign_title": campaign.title,
+                        "budget_line_id": invoice.budget_line_id, "kind": kind, "title": title,
+                        "message": message, "created_at": row.timestamp.isoformat() + "Z",
+                        "proof_url": f"/{invoice.evidence_path.lstrip('/')}" if invoice.evidence_path else None})
+    return updates
+
+
+def _csv_cell(value: object) -> object:
+    """Keep untrusted names and notes from becoming spreadsheet formulas."""
+    if not isinstance(value, str):
+        return value
+    return "'" + value if value.lstrip().startswith(("=", "+", "-", "@")) else value
+
+
+@router.get("/campaigns/{campaign_id}/report.csv")
+def campaign_report(campaign_id: int, request: Request, db: Session = Depends(get_db)):
+    """Download the public transaction and delivery record with evidence URLs."""
+    campaign = _get_or_404(db, Campaign, campaign_id)
+    entries = get_ledger(campaign_id, db)
+    invoices = {invoice.id: invoice for invoice in db.query(Invoice).filter_by(campaign_id=campaign_id).all()}
+    base_url = str(request.base_url).rstrip("/")
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow(["campaign_id", "campaign_title", "campaign_status", "cancellation_reason", "currency",
+                     "goal_amount", "available_balance", "entry_date_utc", "entry_type", "actor", "amount",
+                     "status", "detail", "invoice_url", "delivery_proof_url"])
+    for entry in entries:
+        invoice = invoices.get(entry.invoice_id)
+        invoice_url = f"{base_url}/{invoice.raw_file_path.lstrip('/')}" if invoice and invoice.raw_file_path else ""
+        proof_url = f"{base_url}{entry.proof_url}" if entry.proof_url else ""
+        values = [campaign.id, campaign.title, campaign.status, campaign.cancellation_reason or "",
+                  campaign.currency, campaign.goal_amount, campaign.pool_balance,
+                  entry.created_at.isoformat() + "Z", entry.type, entry.actor_name,
+                  entry.amount, entry.status, entry.detail or "", invoice_url, proof_url]
+        writer.writerow([_csv_cell(value) for value in values])
+    return Response(content="\ufeff" + output.getvalue(), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="campaign-{campaign_id}-report.csv"',
+                             "Cache-Control": "no-store"})
+
+
+@router.post("/campaigns/{campaign_id}/ledger/ask", response_model=LedgerAnswer)
+async def ask_ledger(campaign_id: int, payload: LedgerQuestion, db: Session = Depends(get_db)):
+    """Answer a question from this campaign's current public ledger only."""
+    campaign = _get_or_404(db, Campaign, campaign_id)
+    entries = get_ledger(campaign_id, db)
+    if len(entries) > 500:
+        raise HTTPException(413, "This ledger is too large for the question tool.")
+    snapshot = [entry.model_dump(mode="json", exclude={"proof_url"}) for entry in entries]
+    try:
+        answer = await asyncio.wait_for(
+            advisory_module.answer_ledger_question(payload.question, snapshot, campaign.currency),
+            timeout=25,
+        )
+    except asyncio.TimeoutError as exc:
+        raise HTTPException(504, "Ledger answers are taking too long. Please try again.") from exc
+    except Exception as exc:
+        raise HTTPException(503, "Ledger answers are unavailable right now. Please try again later.") from exc
+    return LedgerAnswer(answer=answer)
+
+
+@router.post("/webhooks/paypal")
+async def paypal_webhook(request: Request, db: Session = Depends(get_db)):
+    """Verify a PayPal event, then reconcile against PayPal's current state."""
+    try:
+        event = await request.json()
+    except ValueError as exc:
+        raise HTTPException(400, "Invalid webhook JSON.") from exc
+    if not isinstance(event, dict):
+        raise HTTPException(400, "Invalid webhook event.")
+    try:
+        verified = await paypal.verify_webhook_signature(dict(request.headers), event)
+    except PayPalError as exc:
+        raise HTTPException(503, "PayPal webhook verification is unavailable.") from exc
+    if not verified:
+        raise HTTPException(401, "Invalid PayPal webhook signature.")
+    try:
+        result = await process_webhook(db, event, paypal)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except PayPalError as exc:
+        db.rollback()
+        raise HTTPException(503, "PayPal reconciliation is temporarily unavailable.") from exc
+    return {"status": result}
 
 
 # ---------------------------------------------------------------------------
@@ -1037,4 +1377,6 @@ def get_ledger(campaign_id: int, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 app.include_router(router)
 app.include_router(router, prefix="/api")
+app.include_router(auth_router)
+app.include_router(auth_router, prefix="/api")
 

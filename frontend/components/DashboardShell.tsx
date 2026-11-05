@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useDemoSession } from "@/lib/demo-session";
+import { useAccount } from "@/lib/account-session";
 import { demoRoles, type DemoRole } from "@/lib/demo-state";
 
 export default function DashboardShell({
@@ -18,11 +19,13 @@ export default function DashboardShell({
   children: React.ReactNode;
 }) {
   const session = useDemoSession();
-  const path = demoRoles.find((item) => item.name === session?.role)?.path;
+  const account = useAccount();
+  const active = role === "Donor" ? session : account && { name: account.name, role: account.role[0].toUpperCase() + account.role.slice(1) };
+  const path = demoRoles.find((item) => item.name === active?.role)?.path;
 
   return (
     <main id="main-content" tabIndex={-1} className="page-width py-12">
-      {!session || session.role !== role ? (
+      {!active || active.role !== role ? (
         <section className="liquid-glass mx-auto max-w-xl p-8 sm:p-12 shadow-2xl">
           <div className="flex items-center gap-2.5">
             <span className="flex h-7 w-7 items-center justify-center rounded-xl bg-gradient-to-br from-[#003087] via-[#00457C] to-[#0079C1] p-1.5 shadow-md shadow-blue-900/20 ring-1 ring-white/50">
@@ -33,13 +36,13 @@ export default function DashboardShell({
             </span>
             <p className="text-xs font-black uppercase tracking-widest text-[#003087]">{role} Workspace</p>
           </div>
-          <h1 className="mt-4 text-3xl font-extrabold tracking-tight text-[#001435] sm:text-4xl">Choose a demo role</h1>
+          <h1 className="mt-4 text-3xl font-extrabold tracking-tight text-[#001435] sm:text-4xl">Sign in to continue</h1>
           <p className="mt-3 text-xs leading-relaxed text-slate-600">
-            Please switch to the <strong className="text-[#001435]">{role}</strong> role on the demo sign-in page to access this workspace and its tools.
+            Sign in with a <strong className="text-[#001435]">{role}</strong> account to access this workspace and its tools.
           </p>
           <div className="mt-8 flex flex-wrap gap-3">
             <Link href="/signin" className="button-primary text-xs shadow-md shadow-blue-900/15">
-              Switch workspace &rarr;
+              Sign in &rarr;
             </Link>
             {path && (
               <Link href={path} className="button-secondary text-xs">
@@ -65,7 +68,7 @@ export default function DashboardShell({
             </div>
             <h1 className="mt-4 text-3xl font-extrabold tracking-tight sm:text-5xl text-[#001435]">{title}</h1>
             <p className="mt-3 max-w-3xl text-sm leading-relaxed text-slate-600">
-              Welcome, <strong className="text-[#001435]">{session.name}</strong>. {description}
+              Welcome, <strong className="text-[#001435]">{active.name}</strong>. {description}
             </p>
             <ol className="mt-7 flex flex-wrap gap-2.5" aria-label="Workflow progress steps">
               {steps.map((step, index) => (

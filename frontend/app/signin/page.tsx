@@ -1,123 +1,371 @@
 "use client";
 
-import Image from "next/image";
+import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { signInDemo } from "@/lib/demo-session";
-import { demoRoles, type DemoRole } from "@/lib/demo-state";
+import { signOutDemo } from "@/lib/demo-session";
+import { api } from "@/lib/api";
+import { setAccount } from "@/lib/account-session";
+import styles from "./signin.module.css";
+
+type RoleId = "organizer" | "vendor" | "verifier" | "donor";
+type AuthTab = "login" | "register";
+
+const ALL_ROLES = [
+  {
+    id: "organizer" as const,
+    name: "Organizer" as const,
+    title: "Organizer",
+    icon: "🏛️",
+    badge: "Campaign Lead",
+    path: "/organizer",
+    detail: "Manage campaigns, define budgets & track payouts",
+    storyHeadline: "Create campaigns with transparent budgets.",
+    storyText: "Set line-item budget caps, assign certified vendors, and monitor payouts without ever taking custody of donor funds.",
+  },
+  {
+    id: "vendor" as const,
+    name: "Vendor" as const,
+    title: "Vendor",
+    icon: "📦",
+    badge: "Contractor",
+    path: "/vendor",
+    detail: "Submit invoices & delivery proof for Gemini AI check",
+    storyHeadline: "Upload delivery proof and get paid directly.",
+    storyText: "Submit invoice PDFs and delivery photos. Gemini AI extracts fields and Python rules verify budget limits before payout.",
+  },
+  {
+    id: "verifier" as const,
+    name: "Verifier" as const,
+    title: "Verifier",
+    icon: "🔍",
+    badge: "Auditor",
+    path: "/verifier",
+    detail: "Inspect Gemini OCR checks & approve payouts",
+    storyHeadline: "Independent human review of AI audit results.",
+    storyText: "Audit Gemini OCR extraction, check 8 automated policy rules, and authorize PayPal payouts with immutable ledger recording.",
+  },
+  {
+    id: "donor" as const,
+    name: "Donor" as const,
+    title: "Donor",
+    icon: "💙",
+    badge: "Community",
+    path: "/donor",
+    detail: "Public donations, receipts & transparency ledger",
+    storyHeadline: "Track every dollar from checkout to delivery.",
+    storyText: "Donate through PayPal Orders v2 into a protected campaign pool. Query spending anytime with the AI ledger assistant.",
+  },
+] as const;
 
 export default function SignInPage() {
   const router = useRouter();
-  const [role, setRole] = useState<DemoRole>("Donor");
-  const [name, setName] = useState("");
-  const [error, setError] = useState("");
+  const [activeRole, setActiveRole] = useState<RoleId>("organizer");
+  const [authTab, setAuthTab] = useState<AuthTab>("login");
 
-  function submit(event: FormEvent<HTMLFormElement>) {
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [inviteToken, setInviteToken] = useState("");
+  const [bootstrapKey, setBootstrapKey] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [error, setError] = useState("");
+  const [pending, setPending] = useState(false);
+
+  const currentRole = ALL_ROLES.find((r) => r.id === activeRole) ?? ALL_ROLES[0];
+
+  function selectRole(roleId: RoleId) {
+    setActiveRole(roleId);
+    setError("");
+  }
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setPending(true);
+    setError("");
     try {
-      signInDemo(role, name);
-      router.push(demoRoles.find((item) => item.name === role)!.path);
+      if (activeRole === "donor") {
+        router.push("/donor");
+        return;
+      }
+
+      const account =
+        authTab === "login"
+          ? await api.login(email, password)
+          : await api.registerAccount(activeRole, {
+              name,
+              email,
+              password,
+              ...(activeRole === "vendor" ? { invite_token: inviteToken } : {}),
+              ...(activeRole === "verifier" ? { bootstrap_key: bootstrapKey } : {}),
+            });
+
+      signOutDemo();
+      setAccount(account);
+      router.push(`/${account.role}`);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not open the demo workspace.");
+      setError(cause instanceof Error ? cause.message : "Could not authenticate. Please check your credentials.");
+    } finally {
+      setPending(false);
     }
   }
 
   return (
-    <main id="main-content" tabIndex={-1} className="page-width grid min-h-[80vh] items-center gap-10 py-10 lg:grid-cols-2">
-      <section className="relative min-h-[480px] overflow-hidden rounded-[2.5rem] bg-gradient-to-br from-[#001435] via-[#003087] to-[#00457C] text-white shadow-xl shadow-blue-950/20">
-        <Image
-          src="/images/community-event.jpg"
-          fill
-          sizes="(max-width: 1024px) 100vw, 50vw"
-          alt="A volunteer helping at a community event"
-          className="object-cover opacity-35 mix-blend-overlay image-reveal"
-        />
-        <div className="absolute inset-0 bg-gradient-to-t from-[#001435] via-[#001435]/60 to-transparent" />
-        <div className="absolute inset-x-0 bottom-0 p-8 sm:p-12">
-          <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-bold text-white backdrop-blur-md">
-            <span className="h-2 w-2 rounded-full bg-[#FFC439]" />
-            PayPal AI Hackathon
-          </div>
-          <h1 className="display-heading mt-5 text-4xl text-white sm:text-5xl">
-            Choose your role.<br />
-            <span className="text-[#BAE0FC]">See every dollar.</span>
-          </h1>
-          <p className="mt-4 max-w-md text-base leading-7 text-blue-100">
-            Contribute as a donor, invoice as a vendor, manage as an organizer, or approve payouts as a verifier.
-          </p>
-          <div className="mt-6 flex flex-wrap gap-2 text-xs text-blue-200">
-            <span>Direct PayPal Payouts</span> · <span>Zero Organiser Custody</span> · <span>Public Ledger</span>
-          </div>
-        </div>
-      </section>
-
-      <section className="liquid-glass p-8 sm:p-12 shadow-2xl shadow-blue-900/10" aria-labelledby="signin-title">
-        <div className="flex items-center gap-2.5">
-          <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-[#003087] via-[#00457C] to-[#0079C1] p-1.5 shadow-md shadow-blue-900/20 ring-1 ring-white/50">
-            <svg width="18" height="18" viewBox="0 0 32 32" fill="none" className="-rotate-6 transform">
-              <path d="M6 5.5h11c3.8 0 6.5 2.5 6 6.3-.9 5.4-4.6 7.2-8.8 7.2H10.5L8 30.5H3.5L6 5.5z" fill="#001C64" />
-              <path d="M11 9.5h11c3.8 0 6.5 2.5 6 6.3-.9 5.4-4.6 7.2-8.8 7.2h-3.7L13 32.5H8.5L11 9.5z" fill="#009CDE" opacity="0.9" />
-            </svg>
-          </span>
-          <p className="text-xs font-black uppercase tracking-widest text-[#003087]">Demo Workspace Access</p>
-        </div>
-        <h2 id="signin-title" className="mt-4 text-3xl font-extrabold tracking-tight text-[#001435] sm:text-4xl">
-          Sign in to your role.
-        </h2>
-        <p className="mt-2 text-xs leading-relaxed text-slate-600">
-          Select a role to inspect the flow from donation to verified vendor disbursement. This selects a demo role; it does not sign in to PayPal.
-        </p>
-
-        <form onSubmit={submit} className="mt-7 space-y-5">
-          <label className="block text-xs font-extrabold uppercase tracking-wider text-slate-500">
-            Display name <span className="font-normal text-slate-400">(optional)</span>
-            <input
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              maxLength={80}
-              autoComplete="nickname"
-              placeholder="e.g. Alex Chen"
-              className="mt-1.5 w-full rounded-2xl border border-white/80 bg-white/80 px-4 py-3 text-sm font-semibold text-[#001435] shadow-sm backdrop-blur-md transition focus:border-[#0070BA] focus:outline-none focus:ring-2 focus:ring-[#0070BA]/20"
-            />
-          </label>
-
-          <fieldset>
-            <legend className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-500">
-              Continue as
-            </legend>
-            <div className="grid gap-3 sm:grid-cols-2">
-              {demoRoles.map((item) => (
-                <label
-                  key={item.name}
-                  className={`role-card ${role === item.name ? "role-card-selected" : ""}`}
-                >
-                  <span className="flex items-center gap-2.5">
-                    <input
-                      type="radio"
-                      name="role"
-                      value={item.name}
-                      checked={role === item.name}
-                      onChange={() => setRole(item.name)}
-                      className="h-4 w-4 accent-[#003087]"
-                    />
-                    <strong className="text-sm font-bold text-[#001435]">{item.name}</strong>
-                  </span>
-                  <span className="mt-2 block text-xs leading-5 text-slate-600">{item.description}</span>
-                </label>
-              ))}
+    <main id="main-content" tabIndex={-1} className={styles.page}>
+      <div className={styles.shell}>
+        {/* Left Hero Story Column */}
+        <section className={styles.story} aria-labelledby="story-title">
+          <div className={styles.storyInner}>
+            <div className={styles.eyebrow}>
+              <span className={styles.eyebrowDot} /> STRAIGHTMONEY WORKSPACE
             </div>
-          </fieldset>
+            <h1 id="story-title">
+              Good work deserves <span>clear money trails.</span>
+            </h1>
+            <p className={styles.storyCopy}>
+              Keep campaign spending accountable, from the first contribution to the final vendor payout.
+            </p>
 
-          <button className="button-primary w-full text-sm font-extrabold shadow-lg shadow-blue-950/20 hover:scale-[1.01]" type="submit">
-            Open {role.toLowerCase()} workspace &rarr;
-          </button>
+            {/* Dynamic Role Highlight Card */}
+            <div className={styles.roleHighlightBadge}>
+              <span className={styles.roleHighlightIcon} aria-hidden="true">{currentRole.icon}</span>
+              <div>
+                <strong>{currentRole.title}: {currentRole.storyHeadline}</strong>
+                <p>{currentRole.storyText}</p>
+              </div>
+            </div>
 
-          {error && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-900">{error}</p>}
-          <p className="text-center text-xs text-slate-500">
-            Workspace selection creates a simulated session in your browser.
+            <div className={styles.flow} aria-label="How campaign funds are tracked">
+              <div className={styles.flowItem}>
+                <span className={styles.flowIcon}>01</span>
+                <div>
+                  <strong>Contributions captured</strong>
+                  <small>PayPal Orders v2 with public ledger entries.</small>
+                </div>
+              </div>
+              <div className={styles.flowItem}>
+                <span className={styles.flowIcon}>02</span>
+                <div>
+                  <strong>Invoices independently reviewed</strong>
+                  <small>Gemini OCR field validation &amp; 8 policy checks.</small>
+                </div>
+              </div>
+              <div className={styles.flowItem}>
+                <span className={styles.flowIcon}>03</span>
+                <div>
+                  <strong>Payouts directly disbursed</strong>
+                  <small>Funds go to vendor accounts, never organizer custody.</small>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className={styles.storyFoot}>
+            <span className={styles.goldLine} /> Built for transparent giving · PayPal Sandbox
+          </div>
+        </section>
+
+        {/* Right Access Control Column */}
+        <section className={styles.access} aria-labelledby="access-title">
+          <div className={styles.accessHead}>
+            <div className={styles.productMark} aria-hidden="true">
+              S<span>M</span>
+            </div>
+            <div>
+              <strong>StraightMoney</strong>
+              <small>Secure Workspace Access</small>
+            </div>
+          </div>
+
+          <span className={styles.sectionLabel}>AUTHENTICATE ACCESS</span>
+          <h2 id="access-title">
+            {authTab === "login" ? `Sign In as ${currentRole.title}` : `Create ${currentRole.title} Account`}
+          </h2>
+          <p className={styles.intro}>
+            {authTab === "login"
+              ? "Enter your account email and password to access your role dashboard."
+              : "Register your account with verified credentials to join this workspace."}
           </p>
-        </form>
-      </section>
+
+          {/* Interactive Role Selector */}
+          <div className={styles.roleChoices} role="group" aria-label="Select workspace role">
+            {ALL_ROLES.map((role) => {
+              const isSelected = activeRole === role.id;
+              return (
+                <button
+                  key={role.id}
+                  type="button"
+                  onClick={() => selectRole(role.id)}
+                  aria-pressed={isSelected}
+                  className={isSelected ? styles.roleSelected : styles.roleChoice}
+                >
+                  <div className={styles.roleChoiceHeader}>
+                    <span className={styles.roleIcon} aria-hidden="true">{role.icon}</span>
+                    {isSelected && <span className={styles.roleCheck}>Selected ✓</span>}
+                  </div>
+                  <div>
+                    <strong>{role.title}</strong>
+                    <small>{role.detail}</small>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Access Mode Switcher Tabs (Sign in / Register) */}
+          <div className={styles.switcher} role="group" aria-label="Authentication method">
+            <button
+              type="button"
+              className={authTab === "login" ? styles.switchActive : ""}
+              onClick={() => { setAuthTab("login"); setError(""); }}
+              aria-pressed={authTab === "login"}
+            >
+              🔑 Sign in
+            </button>
+            <button
+              type="button"
+              className={authTab === "register" ? styles.switchActive : ""}
+              onClick={() => { setAuthTab("register"); setError(""); }}
+              aria-pressed={authTab === "register"}
+            >
+              📝 Create Account
+            </button>
+          </div>
+
+          {/* Donor Exploration View */}
+          {activeRole === "donor" ? (
+            <div className="space-y-4 rounded-2xl border border-blue-200/90 bg-blue-50/80 p-5 dark:border-blue-900/60 dark:bg-blue-950/40">
+              <div className="flex items-center gap-3">
+                <span className="text-2xl" aria-hidden="true">💙</span>
+                <div>
+                  <h3 className="text-sm font-extrabold text-[#001435] dark:text-white">
+                    Public Community Donor Access
+                  </h3>
+                  <p className="text-xs text-slate-600 dark:text-slate-300">
+                    Donors do not require server credentials to browse campaigns, make PayPal contributions, or audit the public ledger.
+                  </p>
+                </div>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2 pt-2">
+                <Link
+                  href="/explore"
+                  className="inline-flex items-center justify-center rounded-full bg-[#003087] px-4 py-2.5 text-xs font-bold text-white transition hover:bg-[#00276c] shadow-sm"
+                >
+                  Browse Campaigns →
+                </Link>
+                <Link
+                  href="/donor"
+                  className="inline-flex items-center justify-center rounded-full border border-blue-300 bg-white px-4 py-2.5 text-xs font-bold text-[#003087] transition hover:bg-blue-50 dark:border-blue-800 dark:bg-slate-900 dark:text-sky-300"
+                >
+                  Open Donor Workspace →
+                </Link>
+              </div>
+            </div>
+          ) : (
+            <form onSubmit={submit} className={styles.form}>
+              {authTab === "register" && (
+                <label htmlFor="account-name">
+                  Full name
+                  <input
+                    id="account-name"
+                    required
+                    value={name}
+                    onChange={(event) => setName(event.target.value)}
+                    maxLength={80}
+                    autoComplete="name"
+                    placeholder="e.g. Alex Morgan"
+                  />
+                </label>
+              )}
+
+              <label htmlFor="account-email">
+                Email address
+                <input
+                  id="account-email"
+                  required
+                  type="email"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  autoComplete="email"
+                  placeholder="name@example.com"
+                />
+              </label>
+
+              <label htmlFor="account-password">
+                Password
+                <span className={styles.passwordField}>
+                  <input
+                    id="account-password"
+                    required
+                    type={showPassword ? "text" : "password"}
+                    minLength={authTab === "register" ? 12 : undefined}
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    autoComplete={authTab === "register" ? "new-password" : "current-password"}
+                    placeholder={authTab === "register" ? "At least 12 characters" : "Enter your password"}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((value) => !value)}
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                  >
+                    {showPassword ? "Hide" : "Show"}
+                  </button>
+                </span>
+                {authTab === "register" && (
+                  <small>Use at least 12 characters to protect your campaign workspace.</small>
+                )}
+              </label>
+
+              {authTab === "register" && activeRole === "vendor" && (
+                <label htmlFor="vendor-invite">
+                  Invitation token
+                  <input
+                    id="vendor-invite"
+                    required
+                    value={inviteToken}
+                    onChange={(event) => setInviteToken(event.target.value)}
+                    autoComplete="off"
+                    placeholder="Token provided by your campaign organizer"
+                  />
+                  <small>Must match the registered payout email assigned by the campaign organizer.</small>
+                </label>
+              )}
+
+              {authTab === "register" && activeRole === "verifier" && (
+                <label htmlFor="verifier-key">
+                  Verifier enrollment key
+                  <input
+                    id="verifier-key"
+                    required
+                    type="password"
+                    value={bootstrapKey}
+                    onChange={(event) => setBootstrapKey(event.target.value)}
+                    autoComplete="off"
+                    placeholder="Enter cryptographic enrollment key"
+                  />
+                  <small>Required to authorize human verifier decision powers.</small>
+                </label>
+              )}
+
+              {error && <p className={styles.error} role="alert">{error}</p>}
+
+              <button type="submit" disabled={pending} className={styles.submit}>
+                {pending
+                  ? "Authenticating…"
+                  : authTab === "login"
+                  ? `Sign In as ${currentRole.title}`
+                  : `Register ${currentRole.title} Account`}
+                {!pending && <span aria-hidden="true">→</span>}
+              </button>
+            </form>
+          )}
+
+          <div className={styles.accessFoot}>
+            <Link href="/explore">Browse campaigns</Link>
+            <Link href="/donor">Public donor view</Link>
+          </div>
+        </section>
+      </div>
     </main>
   );
 }

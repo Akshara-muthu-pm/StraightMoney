@@ -2,7 +2,7 @@ export default function ProgressBar({
   current,
   goal,
   label = "Campaign funding progress",
-  caption = "Funded",
+  caption,
 }: {
   current: number;
   goal: number;
@@ -11,23 +11,29 @@ export default function ProgressBar({
 }) {
   const percent = goal > 0 ? Math.max(0, Math.min(100, Math.round((current / goal) * 100))) : 0;
   return (
-    <div>
-      <div className="mb-2 flex items-center justify-between text-sm font-semibold text-slate-600">
-        <span>{caption}</span>
-        <span className="font-extrabold text-[#001435] tabular-nums">{percent}%</span>
-      </div>
-      <div
-        className="h-3.5 overflow-hidden rounded-full bg-[#E1E7EC] p-0.5"
-        role="progressbar"
-        aria-valuenow={percent}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-label={label}
-      >
+    <div className="w-full">
+      {caption && (
+        <div className="mb-1.5 flex items-center justify-between text-xs font-bold text-slate-600 dark:text-slate-300">
+          <span>{caption}</span>
+        </div>
+      )}
+      <div className="flex items-center gap-3">
         <div
-          className="h-full rounded-full bg-gradient-to-r from-[#003087] via-[#00457C] to-[#0070BA] transition-all duration-500 ease-out"
-          style={{ width: `${percent}%` }}
-        />
+          className="liquid-progress-container relative h-3 flex-1 overflow-hidden rounded-full p-0.5"
+          role="progressbar"
+          aria-valuenow={percent}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label={label}
+        >
+          <div
+            className="liquid-progress-fill h-full rounded-full transition-all duration-500 ease-out"
+            style={{ width: `${percent}%` }}
+          />
+        </div>
+        <span className="min-w-[2.75rem] text-right text-xs font-black text-[#003087] dark:text-[#38bdf8] tabular-nums">
+          {percent}%
+        </span>
       </div>
     </div>
   );

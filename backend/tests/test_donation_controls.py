@@ -9,8 +9,18 @@ from config import settings
 from db import Base, get_db
 import main
 from main import app
-from models import Campaign
+from models import Campaign, User, UserSession
+from auth import COOKIE_NAME, _digest, _now
+from datetime import timedelta
 from schemas import DonationCreate
+
+
+@pytest.fixture(autouse=True)
+def reset_rate_limits():
+    from guards import _requests
+    _requests.clear()
+    yield
+    _requests.clear()
 
 
 @pytest.mark.parametrize("amount", [0, -1])
@@ -156,7 +166,12 @@ def test_test_override_requires_key(client):
     assert response.status_code == 401
 
 
-def test_valid_key_passes_verifier_gate(client):
-    response = client.post("/invoices/999/reject", json={"verifier_name": "Tester"},
-                           headers={"X-Verifier-Key": "test-verifier-key"})
+def test_verifier_account_passes_verifier_gate(client):
+    with next(app.dependency_overrides[get_db]()) as db:
+        db.add(User(id=99, email="reviewer@example.com", name="Reviewer", password_hash="fixture", role="verifier"))
+        db.add(UserSession(user_id=99, token_hash=_digest("verifier-fixture"),
+                           expires_at=_now() + timedelta(days=1)))
+        db.commit()
+    client.cookies.set(COOKIE_NAME, "verifier-fixture")
+    response = client.post("/invoices/999/reject", json={"verifier_name": "Tester"})
     assert response.status_code == 404

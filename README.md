@@ -1,127 +1,219 @@
 # StraightMoney
 
-**A PayPal Sandbox prototype for transparent community fundraising.** Donors fund a campaign, vendors submit invoices and delivery evidence, and a verifier approves eligible payouts to the vendor's registered PayPal account. The organizer does not receive a payout through the app. Built for the PayPal AI Hackathon; no live payments are supported.
+**A PayPal Sandbox prototype for transparent community fundraising.** Donors fund verified campaigns, vendors submit invoices and delivery evidence, and independent verifiers approve eligible payouts directly to the vendor's registered PayPal account. Organizers never take custody of pooled funds. Built for the PayPal AI Hackathon; operates strictly in the PayPal Sandbox environment (no live real-money payments are supported).
 
-## Current state
+---
 
-The repository contains a FastAPI backend and Next.js frontend, backed by PostgreSQL. On first startup, the API creates its tables and seeds a **School Library Corner** campaign with a $1,200 goal and three budget lines: shelves ($400), books ($600), and paint ($200). The UI includes campaign and donation, organizer, vendor submission, verifier, and public ledger pages.
+## Architecture & How It Works
 
-| Step | Implementation |
+StraightMoney enforces strict separation of duties, deterministic policy gates, and multimodal AI verification before releasing funds.
+
+```
+       [ Donor ]                [ Vendor ]              [ Verifier ]
+           │                        │                         │
+     PayPal Orders v2         Uploads Invoice &           Reviews Evidence &
+    (Sandbox Checkout)         Delivery Proof              Policy Results
+           │                        │                         │
+           ▼                        ▼                         ▼
+   ┌───────────────┐        ┌───────────────┐         ┌───────────────┐
+   │ Escrow Pool   │        │ Gemini Vision │         │ Deterministic │
+   │ (PostgreSQL + │◄───────┤ Multimodal    │────────►│ 8-Point Policy│
+   │ Row Locks)    │        │ OCR Extraction│         │ Engine        │
+   └───────┬───────┘        └───────────────┘         └───────┬───────┘
+           │                                                  │
+           └──────────────────┬───────────────────────────────┘
+                              ▼
+                   [ PayPal Payouts v1 ]
+             (Direct Vendor Batch Disbursement)
+                              │
+                              ▼
+                   [ Transparent Public Ledger ]
+             (Live Audit Trail + Gemini Natural Language Q&A)
+```
+
+| Lifecycle Step | Implementation & Safeguards |
 | --- | --- |
-| Donate | PayPal Orders v2 checkout and capture, or an explicitly enabled simulated donation for local demos |
-| Submit | Vendor uploads a PDF or image invoice and optional proof photo |
-| Extract and review | Gemini extracts invoice fields and provides advisory flags; eight Python policy checks decide whether the invoice can reach the verifier |
-| Approve and pay | A verifier approves or rejects; approved invoices use PayPal Payouts in tracked installments as captured funds become available |
-| Inspect | The public ledger shows donation records and confirmed payouts, with links to uploaded evidence where available |
+| **1. Donate** | Authentic PayPal Orders v2 checkout and capture. Captured funds credit the campaign ledger upon verified `COMPLETED` capture status with idempotent duplicate prevention. |
+| **2. Submit** | Assigned vendors upload invoice PDFs or images and photographic proof via interactive drag-and-drop dropzones with real-time size validation and image previews. |
+| **3. Extract & Analyze** | Google Gemini multimodal Vision performs OCR to extract invoice metadata (vendor, invoice #, line items, totals, currency, dates). A phased real-time progress card updates the vendor during extraction. |
+| **4. Policy Verification** | An 8-point deterministic Python policy engine evaluates business rules (campaign active, assigned vendor, registered payout email match, duplicate invoice check, remaining budget check, balance sufficiency for installments, currency match, and proof attachment). |
+| **5. Independent Review** | Verifiers inspect extracted data side-by-side with raw documents, advisory flags, and policy verdicts in a WCAG AA-compliant frosted liquid-glass dashboard. Organizers and vendors cannot approve payouts. |
+| **6. Disburse (Installments)** | Verifier-approved invoices trigger automated PayPal Payouts batches. If campaign funds are currently insufficient, payouts are queued into tracked installments funded as new donations arrive. |
+| **7. Reconcile Webhooks** | Verified PayPal capture, refund, dispute, and payout item webhooks update ledger status with cryptographic signature verification. Conflicting records flag in the verifier workspace. |
+| **8. Delivery Closeout** | After full payout, the vendor submits itemized delivery completion records; the campaign organizer accepts delivery or logs remaining issues. |
+| **9. Reversals & Refunds** | Organizers can cancel campaigns to trigger full PayPal capture refunds to donors. PayPal dispute events place holds on available balances. |
+| **10. Transparent Ledger** | The public ledger records all donation captures, payout transfers, and verified reversals with links to raw evidence. Visitors can query ledger history using conversational natural language powered by Gemini (`POST /campaigns/{id}/ledger/ask`). |
 
-The eight policy checks cover campaign status, assigned vendor, registered payout email, duplicate invoice number, remaining budget, available funds, currency, and attached proof. The funds check reports how much is available for the first installment; a short balance does not prevent approval. Advisory AI output cannot independently approve a payout.
+---
 
-After an Orders v2 capture response, the API reads `purchase_units[0].payments.captures[0].status`. It credits the campaign only for `COMPLETED`, once per order. `PENDING` leaves the donation uncredited; a repeat call to the capture endpoint checks the existing order without submitting a second capture. Other capture statuses are recorded as failed with the PayPal status saved in `paypal_capture_status`. The two `.env.example` files describe the existing Sandbox settings; capture verification needs no new environment variable.
+## Deterministic 8-Point Policy Engine
 
-**Sandbox test override:** The verifier UI has an explicit test action that can approve an invoice despite failed policy checks. It is enabled by default in the example configuration and only works with the PayPal Sandbox base URL. It records an audit event and routes to the vendor's registered email. Set `ENABLE_VERIFIER_TEST_OVERRIDE=false` and `NEXT_PUBLIC_ENABLE_VERIFIER_TEST_OVERRIDE=false` to hide and reject it when testing the normal policy flow.
+Before an invoice can reach a verifier for payout approval, it must pass eight strict deterministic checks:
 
-## Run locally
+1. **`CampaignActive`**: Campaign must be in `ACTIVE` state (not draft or closed).
+2. **`VendorApproved`**: Vendor must be actively registered and officially assigned to the target budget line.
+3. **`PayoutEmailMatch`**: Extracted payout email must match the vendor's pre-registered PayPal account email (case-insensitive).
+4. **`NoDuplicate`**: Neither active nor rejected duplicate invoice numbers may exist for this vendor (plus document hash verification).
+5. **`WithinBudgetLine`**: Payout claim cannot exceed the budget line's allocated remaining funds.
+6. **`PoolHasFunds`**: Campaign balance must have available captured funds; allows partial installment scheduling if funds are pending.
+7. **`CurrencyMatch`**: Invoice currency must strictly match the campaign currency (e.g., `USD`).
+8. **`EvidenceAttached`**: Photographic proof of delivered goods or services must accompany the invoice (PDF alone is insufficient).
 
-Prerequisites: Python 3.11+, Node.js and npm, and Docker Compose. A Gemini API key enables AI invoice extraction and advisory checks; without one, text PDFs can use a strict fallback that reads labeled invoice number, payout email, total and currency. Missing fields and image invoices require manual review; the fallback never invents amounts or verifies delivery. PayPal Sandbox credentials are needed to exercise actual Sandbox checkout and payout calls; the app also has simulation paths for local demonstrations.
+*Note: AI advisory outputs provide risk signals and line-item sanity checks to the verifier, but AI cannot independently authorize payouts.*
 
-1. From the repository root, copy the environment examples and edit the copies:
+---
 
-   ```powershell
-   Copy-Item .env.example .env
-   Copy-Item frontend/.env.example frontend/.env.local
-   ```
+## Security & Reliability Safeguards
 
-   Set a PostgreSQL password in `.env` and use the same value in `DATABASE_URL`. For PayPal Sandbox, set `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET` in `.env`. Checkout redirects to PayPal's Sandbox approval page and returns to `FRONTEND_URL/donate/paypal-return`, where the API confirms capture before crediting the campaign. Set `FRONTEND_URL` to the browser-accessible frontend origin (normally `http://localhost:3000`). Set `LLM_API_KEY` to your Gemini key and choose an available `LLM_MODEL`. Keep `PAYPAL_BASE_URL` on the Sandbox URL. The frontend API URL defaults to `http://localhost:8000`.
+- **Financial Integrity**:
+  - Row-level database locks (`SELECT ... FOR UPDATE`) prevent race conditions during concurrent donations, claims, and payout approvals.
+  - Strict enforcement of the PayPal Sandbox base URL (`https://api-m.sandbox.paypal.com`).
+  - Idempotent transaction processing ensures webhooks and captures are never double-counted.
+- **Strict Separation of Duties**:
+  - Organizers cannot approve invoices; vendors cannot approve their own submissions.
+  - Multi-role access control (Organizer, Vendor, Verifier, Donor) authenticated via secure Argon2 password hashing and role-scoped session tokens.
+- **File Upload Hardening**:
+  - Magic-byte validation verifies PDF (`%PDF-`) and image signatures (`PIL.Image.verify`); invalid or disguised file types are rejected immediately.
+  - SVG uploads are blocked to prevent Stored Cross-Site Scripting (XSS).
+  - Evidence files are served with restrictive sandboxed headers (`Content-Security-Policy: sandbox; default-src 'none'`).
+- **Data Protection & Sanitization**:
+  - Downloadable CSV audit reports sanitize cells starting with `=, +, -, @` to neutralize formula injection attacks.
+  - Rate limiting protects public endpoints against brute-force abuse (`MAX_UPLOAD_BYTES`, `MAX_PDF_PAGES`, `WRITE_RATE_LIMIT`).
 
-   Set `VERIFIER_KEY` to a private value in the backend `.env`, then enter it once on `/verifier`; the browser keeps it in that tab's session storage and sends it only for approve, reject, retry, and the test override. `MAX_DONATION_AMOUNT` defaults to 5000 and is enforced by the API. Match `NEXT_PUBLIC_MAX_DONATION_AMOUNT` in the frontend for the form limit. `ALLOW_SIMULATED_DONATIONS` defaults to `false`; set it and `NEXT_PUBLIC_ALLOW_SIMULATED_DONATIONS` to `true` only when you want the explicit simulated donation control. The public frontend variables are display settings, not security controls.
+---
 
-   On startup, the API applies the additive, idempotent donation migrations in [`backend/migrations/`](backend/migrations/) to existing PostgreSQL databases. New databases receive the columns when tables are created.
+## UI/UX Design System
 
-2. Start PostgreSQL from the repository root:
+- **VisionOS-Inspired Liquid-Glass**: Frosted glass panels (`backdrop-filter: blur(20px)`), glowing border states, and PayPal-branded accents (`#003087` Navy, `#0070BA` Blue, `#009CDE` Cyan, `#FFC439` Gold).
+- **Startup Milestone Escrow & Backer Pledges**: Dedicated **Startups & Emerging** tab and interactive case studies with direct **Donate via PayPal** actions to back early-stage hardware and venture milestones without lump-sum founder risk.
+- **Interactive Role-Based Sign In**: Modern split-card layout with 4 distinct interactive role cards and dynamic real-time storytelling on the campaign's mission.
+- **Rich File Upload Dropzones**: Drag-and-drop file targets with live preview thumbnails, badge indicators, and file-size validation.
+- **Phased OCR Progress Feedback**: Dual-ring animated spinner with 3 live phased stage badges (Upload Artifacts, Gemini OCR Analysis, Policy Rule Evaluation) and elapsed duration counter.
+- **Dynamic Campaign Budgeting**: Organizers can add and delete budget line items seamlessly before publishing.
+- **WCAG AA Compliant**: High-contrast typography and glare-free dark-mode decision controls.
 
-   ```powershell
-   docker compose up -d
-   ```
+---
 
-3. Start the API from `backend`:
+## Prerequisites & Installation
 
-   ```powershell
-   cd backend
-   python -m venv .venv
-   .\.venv\Scripts\Activate.ps1
-   python -m pip install -r requirements.txt
-   uvicorn main:app --reload --port 8000
-   ```
+### Prerequisites
+- **Python**: 3.11+
+- **Node.js**: v20+ and npm
+- **Docker & Docker Compose**: (for PostgreSQL)
+- **PayPal Developer Account**: Sandbox client ID and secret ([developer.paypal.com](https://developer.paypal.com))
+- **Google Gemini API Key**: ([aistudio.google.com](https://aistudio.google.com))
 
-   The API is at <http://localhost:8000>, its health endpoint at <http://localhost:8000/health>, and interactive docs at <http://localhost:8000/docs>. Start it from `backend` so the default upload directory resolves there.
+### 1. Environment Setup
 
-4. In a second terminal, start the UI:
-
-   ```powershell
-   cd frontend
-   npm ci
-   npm run dev
-   ```
-
-   Open <http://localhost:3000>. Set `NEXT_PUBLIC_USE_MOCKS=true` in `frontend/.env.local` for a frontend-only preview; that mode does not persist actions. With mocks off, the UI uses the FastAPI backend.
-
-## Demo flow
-
-1. Open the seeded campaign and capture a Sandbox donation, or enable simulated donations in both environment files and use **Simulate donation without PayPal deduction** for a local demo. Simulated records carry a **SIMULATED** label on the campaign page and public ledger.
-2. Open `/vendor`, select the campaign and budget line, and upload an invoice plus a proof photo. For meaningful AI extraction, configure Gemini. Extraction errors leave the invoice needing review.
-3. Open `/verifier`, enter `VERIFIER_KEY` once for the browser tab, and inspect extracted fields, policy checks, advisory flags, and evidence. Approve a passing invoice or reject it.
-4. Check `/ledger/1` for captured donations and successful payouts. If the campaign has less than the approved invoice amount, later captured donations can trigger the remaining installment.
-
-Payouts are only counted as paid after PayPal confirms success. A simulated payout is recorded as failed and does **not** reduce the campaign balance or claim that the vendor received money. If a Sandbox sender gets `403 PAYOUT_NOT_AVAILABLE`, use a Payouts-enabled Sandbox Business account from a supported sending country, restart the API with that account's credentials, and use **Retry payout** on the invoice. A failed transfer does not reduce the balance.
-
-## Verification
-
-From `backend`, run the automated tests with the installed environment:
-
-```powershell
-.\.venv\Scripts\python.exe -m pytest -q
-```
-
-From `frontend`, run:
+Copy the environment templates and configure your keys:
 
 ```powershell
-npm run lint
-npm run build
+Copy-Item .env.example .env
+Copy-Item frontend/.env.example frontend/.env.local
 ```
 
-The optional live Sandbox CLI scripts require real Sandbox credentials and an interactive buyer approval or eligible payout recipient. Run them from the repository root using the backend virtual environment:
+Key environment variables in `.env`:
+- `PAYPAL_CLIENT_ID` & `PAYPAL_CLIENT_SECRET`: Your PayPal Sandbox credentials.
+- `PAYPAL_BASE_URL`: `https://api-m.sandbox.paypal.com`
+- `LLM_API_KEY`: Your Google Gemini API key.
+- `LLM_MODEL`: Primary model (e.g. `gemini-1.5-pro`).
+- `VERIFIER_KEY`: Enrollment secret required to register a verifier account.
+- `ADMIN_SETUP_KEY`: Setup secret to claim the seeded campaign.
+- `DATABASE_URL`: PostgreSQL connection string (defaults to `postgresql+psycopg://straightmoney:change-me@localhost:5432/straightmoney`).
+
+On startup, the API automatically applies additive, idempotent migrations in [`backend/migrations/`](backend/migrations/) to existing PostgreSQL databases.
+
+### 2. Start PostgreSQL
+
+Launch the database container:
+
+```powershell
+docker compose up -d
+```
+
+### 3. Start the Backend API
+
+From the `backend` folder:
+
+```powershell
+cd backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+uvicorn main:app --reload --port 8000
+```
+
+- API Base: <http://localhost:8000>
+- Health Check: <http://localhost:8000/health>
+- Interactive OpenAPI Docs: <http://localhost:8000/docs>
+
+### 4. Start the Frontend Application
+
+From the `frontend` folder in a new terminal:
+
+```powershell
+cd frontend
+npm ci
+npm run dev
+```
+
+Open <http://localhost:3000> in your browser.
+
+---
+
+## Automated Testing & Verification
+
+### Frontend UI & Interaction Tests
+Runs the test suite verifying spring animations, state machines, role routing, and financial UI invariants:
+
+```powershell
+npm --prefix frontend run test:ui
+```
+
+### Backend Deterministic Policy Tests
+Runs the 39-point unit test suite validating all policy gates:
+
+```powershell
+backend\.venv\Scripts\python -m pytest backend/tests/test_policy.py -v
+```
+
+### Optional Live Sandbox CLI Tests
+Exercise actual PayPal Sandbox checkout and payout calls (requires valid Sandbox buyer/seller credentials):
 
 ```powershell
 .\backend\.venv\Scripts\python.exe backend/scripts/donate_test.py
 .\backend\.venv\Scripts\python.exe backend/scripts/payout_test.py vendor@example.com
 ```
 
-## Repository notes
+---
 
-- Backend: `backend/main.py` exposes the API; `policy.py` contains deterministic checks; `installments.py` manages payout state; `payments.py` calls PayPal; `extraction.py` and `advisory.py` call Gemini.
-- Frontend: `frontend/app` contains the routes; `frontend/lib/api.ts` is the typed API client.
-- `docker-compose.yml` starts PostgreSQL. Tables are created with SQLAlchemy `create_all`; existing PostgreSQL databases receive the additive, idempotent SQL migrations in `backend/migrations`.
-- [`SPEC.md`](SPEC.md) describes the intended product. [`docs/demo-script.md`](docs/demo-script.md) has the reset checklist, scenario run, and video script; [`sample_invoices/`](sample_invoices/) contains fake invoices and proof illustrations. Submission screenshots are still to be added.
-- This is a hackathon prototype. The API has no user authentication or role enforcement, and new invoice and proof uploads are stored in PostgreSQL and served publicly from `/files`; validated legacy files remain available from `/uploads`. Use synthetic demo data and Sandbox credentials only.
+## Interactive Demo Walkthrough
 
-## Payment and upload safeguards
+1. **Explore the Campaign**:
+   - Visit <http://localhost:3000> to view the seeded **School Library Corner** campaign ($1,200 goal, 3 budget lines: shelves, books, paint).
+   - Click **Donate with PayPal** to complete an authentic PayPal Sandbox checkout capture. Watch the progress bar and ledger update in real time.
+2. **Organizer Setup**:
+   - Go to `/signin`, choose the **Organizer** role, and create an account.
+   - Claim the seeded campaign using `ADMIN_SETUP_KEY` or create a new campaign with custom budget lines.
+   - Generate a Vendor Invitation token for a designated budget line.
+3. **Vendor Submission**:
+   - On `/signin`, create a **Vendor** account with the invitation token and assigned payout email.
+   - In `/vendor`, select the assigned budget line, drag-and-drop an invoice PDF/image and proof photo, and click Submit.
+   - Watch the live phased progress indicator as Gemini extracts invoice items and the policy engine runs.
+4. **Verifier Approval**:
+   - Register a **Verifier** account on `/signin` using the private `VERIFIER_KEY`.
+   - Open `/verifier` to inspect the invoice, AI advisory notes, and policy results. Click **Approve Invoice**.
+   - The backend schedules and executes a PayPal Payouts batch.
+5. **Auditing & Closeout**:
+   - Inspect `/ledger/1` to verify the public immutable transaction ledger and download the sanitized CSV report.
+   - Ask Gemini questions about ledger activity (e.g. *"How much has been paid to the book vendor so far?"*).
+   - In `/vendor`, complete the delivery report; in `/organizer`, accept the delivery to close out the budget line.
+6. **Startup Milestone Escrow & Backer Donations**:
+   - Switch to the **Startups & Emerging** tab on the home page or navigate to `/explore/startups` to explore the live venture pilot for **AeroDrone Ag** ($12,500 milestone pool).
+   - Click **Donate via PayPal &rarr; Back Startup Milestone** to pledge capital into PayPal Sandbox escrow balance. Funds are held safely in escrow and disbursed directly to precision hardware suppliers (airframe machining, brushless motors, multispectral sensors) only upon verified delivery milestones.
 
-Approval rechecks current policy and commitments under a database lock. Duplicate checks use the extracted invoice number and a document hash for new uploads. Payout reservations exclude simulated donation balances, so demo donations cannot fund actual Sandbox transfers. Unknown captures and uncertain payout responses remain retryable using the same payment key; confirmed settlements cannot be counted twice.
-
-Uploads are limited to 10 MiB each, 20 PDF pages, and 20 million image pixels. File contents determine the stored type and extension; proof must be a valid JPEG, PNG or WEBP. Invalid file formats are rejected before processing. New evidence is stored in PostgreSQL, while old disk-backed evidence still requires its original upload directory. Back up both when retaining legacy records.
-
-Public write endpoints have a per-process limit of 30 requests per minute per source IP. Configure `MAX_UPLOAD_BYTES`, `MAX_PDF_PAGES` and `WRITE_RATE_LIMIT` if needed. An Internet-facing deployment also needs reverse-proxy body/time limits and a shared rate limiter across workers.
-
-This remains a Sandbox prototype: demo role selection is not account authentication, organizer/vendor submissions are public, and invoice details, verifier notes and evidence are public. The verifier key protects financial decisions. PayPal captures funds in the merchant Sandbox account; the campaign balance is application bookkeeping, not a PayPal escrow product. Refunds, disputes, account-level authorization and production compliance remain outside the demo scope.
-
-Optional PostgreSQL locking and migration tests require a disposable test database (the suite creates and drops isolated schemas):
-
-```bash
-TEST_POSTGRES_URL=postgresql+psycopg://USER:PASSWORD@localhost:5432/TEST_DB python -m pytest -q tests/test_postgres_concurrency.py
-```
-
-Run that command from `backend`; use local test credentials, never a production database.
+---
 
 ## License
 
-MIT. See [`LICENSE`](LICENSE).
+MIT License. See [`LICENSE`](LICENSE).

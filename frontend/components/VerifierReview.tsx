@@ -6,11 +6,10 @@ import { api, USE_MOCKS } from "@/lib/api";
 import type { Invoice } from "@/lib/types";
 import StatusBadge from "./StatusBadge";
 import InvoiceStages from "./InvoiceStages";
+import { useAccount } from "@/lib/account-session";
 
-const TEST_OVERRIDE_ENABLED = process.env.NEXT_PUBLIC_ENABLE_VERIFIER_TEST_OVERRIDE !== "false";
-
-export default function VerifierReview({ invoice, verifierKey, onChanged }: { invoice: Invoice; verifierKey: string; onChanged: (updated: Invoice) => void }) {
-  const [verifierName, setVerifierName] = useState("");
+export default function VerifierReview({ invoice, onChanged }: { invoice: Invoice; onChanged: (updated: Invoice) => void }) {
+  const account = useAccount();
   const [note, setNote] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
@@ -20,12 +19,11 @@ export default function VerifierReview({ invoice, verifierKey, onChanged }: { in
   const evidenceUrl = api.assetUrl(invoice.evidence_path);
   const invoiceUrl = api.assetUrl(invoice.raw_file_path);
   const isImage = (path: string | null) => !!path && /\.(png|jpe?g|webp)$/i.test(path);
-  const decide = async (action: "approve" | "reject" | "retry" | "test-override") => {
-    if (action !== "test-override" && !verifierName.trim()) { setError("Enter your name before continuing."); return; }
+  const decide = async (action: "approve" | "reject" | "retry") => {
     setPending(true); setError(""); setMessage("");
-    const body = { verifier_name: verifierName.trim() || "Sandbox tester", note: note.trim() || (action === "test-override" ? "Sandbox payout test" : undefined), override_for_testing: action === "test-override" };
+    const body = { verifier_name: account?.name || "Verifier", note: note.trim() || undefined };
     try {
-      const updated = action === "approve" || action === "test-override" ? await api.approveInvoice(invoice.id, body, verifierKey) : action === "reject" ? await api.rejectInvoice(invoice.id, body, verifierKey) : await api.retryInvoice(invoice.id, body, verifierKey);
+      const updated = action === "approve" ? await api.approveInvoice(invoice.id, body) : action === "reject" ? await api.rejectInvoice(invoice.id, body) : await api.retryInvoice(invoice.id, body);
       setMessage(USE_MOCKS ? `Demo ${action} selected. No request was sent.` : `Invoice is now ${updated.status}.`);
       if (!USE_MOCKS) onChanged(updated);
     } catch (cause) { setError(cause instanceof Error ? cause.message : `Could not ${action} invoice.`); }
@@ -59,9 +57,9 @@ export default function VerifierReview({ invoice, verifierKey, onChanged }: { in
               ["Payout email", invoice.payout_email],
               ["Submitted", new Date(invoice.created_at).toLocaleDateString()]
             ].map(([label, value]) => (
-              <div key={label} className="rounded-xl border border-slate-200/60 bg-white/70 p-3 backdrop-blur-sm">
-                <dt className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">{label}</dt>
-                <dd className="mt-1 text-sm font-bold text-[#001435]">{value}</dd>
+              <div key={label} className="rounded-xl border border-slate-200/60 bg-white/70 p-3 backdrop-blur-sm dark:border-slate-800 dark:bg-slate-800/60">
+                <dt className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500 dark:text-slate-300">{label}</dt>
+                <dd className="mt-1 text-sm font-bold text-[#001435] dark:text-white tabular-nums">{value}</dd>
               </div>
             ))}
           </dl>
@@ -130,49 +128,30 @@ export default function VerifierReview({ invoice, verifierKey, onChanged }: { in
             <span className="h-2 w-2 rounded-full bg-[#009CDE]" />
             <h2 className="text-xl font-extrabold tracking-tight text-[#001435]">Gemini AI Advisory</h2>
           </div>
-          <p className="mt-3 text-xs leading-relaxed text-slate-600">{advisorySummary || "No advisory summary available."}</p>
-          <p className="mt-3 text-[11px] font-semibold text-slate-400">Advisory only. The human verifier makes the final payout decision.</p>
+          <p className="mt-3 text-xs leading-relaxed text-slate-600 dark:text-slate-300">{advisorySummary || "No advisory summary available."}</p>
+          <p className="mt-3 text-xs font-semibold text-slate-600 dark:text-slate-300">Advisory only. The human verifier makes the final payout decision.</p>
         </section>
 
         <section className="liquid-glass p-6 sm:p-7">
           <h2 className="text-xl font-extrabold tracking-tight text-[#001435]">Your Decision</h2>
-          {((TEST_OVERRIDE_ENABLED && (invoice.status === "REJECTED" || invoice.status === "AWAITING_VERIFIER" || invoice.status === "NEEDS_REVIEW")) || invoice.status === "AWAITING_VERIFIER" || (invoice.status === "FAILED" || invoice.status === "PAYOUT_PENDING" || invoice.status === "PARTIALLY_PAID" || invoice.status === "AWAITING_FUNDS")) && (
-            <>
-              <label className="mt-4 block text-xs font-extrabold uppercase tracking-wider text-slate-500">
-                Your name
-                <input
-                  value={verifierName}
-                  onChange={(event) => setVerifierName(event.target.value)}
-                  className="mt-1.5 w-full rounded-2xl border border-white/80 bg-white/80 p-2.5 text-sm font-semibold text-[#001435] shadow-sm backdrop-blur-md transition focus:border-[#0070BA] focus:outline-none focus:ring-2 focus:ring-[#0070BA]/20"
-                  placeholder="e.g. Alice Verifier"
-                />
-              </label>
-              <label className="mt-3 block text-xs font-extrabold uppercase tracking-wider text-slate-500">
-                Audit Note
-                <textarea
-                  value={note}
-                  onChange={(event) => setNote(event.target.value)}
-                  className="mt-1.5 w-full rounded-2xl border border-white/80 bg-white/80 p-2.5 text-sm font-medium text-[#001435] shadow-sm backdrop-blur-md transition focus:border-[#0070BA] focus:outline-none focus:ring-2 focus:ring-[#0070BA]/20"
-                  placeholder="Optional audit note..."
-                />
-              </label>
-            </>
+          {(invoice.status === "AWAITING_VERIFIER" || invoice.status === "FAILED" || invoice.status === "PAYOUT_PENDING" || invoice.status === "PARTIALLY_PAID" || invoice.status === "AWAITING_FUNDS") && (
+            <label className="mt-3 block text-xs font-extrabold uppercase tracking-wider text-slate-500">
+              Audit Note
+              <textarea
+                value={note}
+                onChange={(event) => setNote(event.target.value)}
+                className="mt-1.5 w-full rounded-2xl border border-white/80 bg-white/80 p-2.5 text-sm font-medium text-[#001435] shadow-sm backdrop-blur-md transition focus:border-[#0070BA] focus:outline-none focus:ring-2 focus:ring-[#0070BA]/20 dark:border-white/10 dark:bg-slate-900/80 dark:text-white"
+                placeholder="Optional audit note..."
+              />
+            </label>
           )}
           {invoice.status === "AWAITING_VERIFIER" && (
             <div className="mt-5 grid grid-cols-2 gap-3">
               <button disabled={pending} onClick={() => void decide("approve")} className="button-primary text-xs w-full shadow-md">
                 Approve
               </button>
-              <button disabled={pending} onClick={() => void decide("reject")} className="rounded-full border-2 border-rose-600 bg-white hover:bg-rose-50 px-5 py-3 text-xs font-extrabold text-rose-700 transition disabled:opacity-50">
+              <button disabled={pending} onClick={() => void decide("reject")} className="rounded-full border-2 border-rose-600 bg-white hover:bg-rose-50 px-5 py-3 text-xs font-extrabold text-rose-700 transition disabled:opacity-50 dark:border-rose-500/80 dark:bg-rose-950/40 dark:text-rose-300 dark:hover:bg-rose-900/60 shadow-xs">
                 Reject
-              </button>
-            </div>
-          )}
-          {TEST_OVERRIDE_ENABLED && invoice.amount > 0 && (invoice.status === "REJECTED" || invoice.status === "AWAITING_VERIFIER" || invoice.status === "NEEDS_REVIEW") && (
-            <div className="mt-5 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-xs text-amber-950">
-              <p className="font-semibold leading-relaxed">Sandbox test override: approve this invoice and attempt to send available funds to the vendor&apos;s registered PayPal account. App policy and AI checks are bypassed. PayPal can still reject the transfer, and no money is marked paid unless PayPal confirms it.</p>
-              <button disabled={pending} onClick={() => void decide("test-override")} className="mt-3 w-full rounded-full bg-amber-600 hover:bg-amber-700 px-4 py-2.5 text-xs font-extrabold text-white shadow-sm transition disabled:opacity-50">
-                Approve for sandbox test
               </button>
             </div>
           )}

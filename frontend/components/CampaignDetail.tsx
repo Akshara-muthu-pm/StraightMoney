@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { api } from "@/lib/api";
+import { api, USE_MOCKS } from "@/lib/api";
 import type { Campaign, Invoice, LedgerEntry } from "@/lib/types";
 import { money, totalFunded } from "@/lib/presentation";
 import { budgetSummary } from "@/lib/budget";
@@ -136,6 +136,9 @@ export default function CampaignDetail({ id }: { id: number }) {
       (entry) => entry.type === "donation" && entry.source === "simulated" && entry.status === "captured"
     ).length;
   }, [ledgerEntries]);
+  const donorCount = ledgerEntries.filter((entry) => entry.type === "donation" && entry.status === "captured" &&
+    (entry.donation_id == null || entry.amount + ledgerEntries.filter((adjustment) => adjustment.donation_id === entry.donation_id && (adjustment.type === "refund" || adjustment.type === "dispute"))
+      .reduce((sum, adjustment) => sum + adjustment.amount, 0) > 0)).length;
 
   // Copy campaign share link
   const handleCopyLink = () => {
@@ -296,7 +299,7 @@ export default function CampaignDetail({ id }: { id: number }) {
               {campaign.organizer_name.charAt(0)}
             </span>
             <div>
-              <p className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
+              <p className="text-xs font-bold text-slate-600 dark:text-slate-300">
                 Organized by <strong className="text-[#001435] dark:text-white">{campaign.organizer_name}</strong>
               </p>
               <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
@@ -325,6 +328,13 @@ export default function CampaignDetail({ id }: { id: number }) {
           {campaign.description}
         </p>
 
+        {(campaign.cancelled_at || ledgerEntries.some((entry) => entry.type === "refund" || entry.type === "dispute")) && <div className="max-w-3xl rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs leading-6 text-amber-950" role="status">
+          {campaign.cancelled_at && <p><strong>Campaign cancelled.</strong> {campaign.cancellation_reason} New donations have stopped. Captured payments are refunded individually through PayPal; completed payouts remain in the ledger.</p>}
+          {ledgerEntries.filter((entry) => entry.type === "refund" || entry.type === "dispute").map((entry, index) => <p key={`${entry.created_at}-${index}`}>
+            <strong>{entry.type === "refund" ? "Refund" : "Dispute"}:</strong> {entry.actor_name} · {entry.status.replaceAll("_", " ")} · {money(Math.abs(entry.amount), campaign.currency)} {entry.amount < 0 ? "removed from available funds" : "currently affecting no available funds"}.
+          </p>)}
+        </div>}
+
         {/* 4 Feature Badges Strip */}
         <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4 pt-2">
           {[
@@ -341,7 +351,7 @@ export default function CampaignDetail({ id }: { id: number }) {
                 <span className="text-base" aria-hidden="true">{item.icon}</span>
                 <strong className="text-xs font-bold text-[#001435] dark:text-white">{item.label}</strong>
               </div>
-              <p className="mt-1 text-[10px] leading-tight text-slate-500 dark:text-slate-400 pl-6">
+              <p className="mt-1 text-xs leading-tight text-slate-600 dark:text-slate-300 pl-6">
                 {item.desc}
               </p>
             </div>
@@ -468,7 +478,7 @@ export default function CampaignDetail({ id }: { id: number }) {
                   <div className="rounded-2xl border border-blue-100 bg-blue-50/70 p-4 dark:border-blue-900/50 dark:bg-blue-950/40">
                     <span className="text-xl">🪵</span>
                     <h3 className="mt-2 text-xs font-black text-[#001435] dark:text-white">1. Shelves ($400)</h3>
-                    <p className="mt-1 text-[11px] text-slate-600 dark:text-slate-400">
+                    <p className="mt-1 text-[11px] text-slate-600 dark:text-slate-300">
                       Four modular, heavy-duty bookshelves constructed by local craftsmen (Vendor A).
                     </p>
                   </div>
@@ -476,7 +486,7 @@ export default function CampaignDetail({ id }: { id: number }) {
                   <div className="rounded-2xl border border-blue-100 bg-blue-50/70 p-4 dark:border-blue-900/50 dark:bg-blue-950/40">
                     <span className="text-xl">📚</span>
                     <h3 className="mt-2 text-xs font-black text-[#001435] dark:text-white">2. Books ($600)</h3>
-                    <p className="mt-1 text-[11px] text-slate-600 dark:text-slate-400">
+                    <p className="mt-1 text-[11px] text-slate-600 dark:text-slate-300">
                       Over 120 curated educational &amp; fiction books delivered by the bookstore (Vendor B).
                     </p>
                   </div>
@@ -484,13 +494,13 @@ export default function CampaignDetail({ id }: { id: number }) {
                   <div className="rounded-2xl border border-blue-100 bg-blue-50/70 p-4 dark:border-blue-900/50 dark:bg-blue-950/40">
                     <span className="text-xl">🎨</span>
                     <h3 className="mt-2 text-xs font-black text-[#001435] dark:text-white">3. Paint ($200)</h3>
-                    <p className="mt-1 text-[11px] text-slate-600 dark:text-slate-400">
+                    <p className="mt-1 text-[11px] text-slate-600 dark:text-slate-300">
                       Safe non-toxic primer, wall colors, and materials supplied by the paint store (Vendor C).
                     </p>
                   </div>
                 </div>
 
-                <p className="pt-2 text-xs text-slate-500 dark:text-slate-400">
+                <p className="pt-2 text-xs text-slate-600 dark:text-slate-300">
                   When any vendor delivers their items, they upload an invoice and delivery photograph. Gemini AI checks OCR fields, Python checks hard budget and duplicate rules, and an independent human verifier approves before PayPal sends the payout.
                 </p>
               </div>
@@ -525,7 +535,7 @@ export default function CampaignDetail({ id }: { id: number }) {
                   <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
                     Paid to Vendors
                   </span>
-                  <p className="mt-1 text-2xl font-black text-emerald-950 dark:text-emerald-100">
+                  <p className="mt-1 text-2xl font-black text-emerald-950 dark:text-emerald-100 tabular-nums">
                     {money(budgetTotals.paid, campaign.currency)}
                   </p>
                   <p className="text-[10px] text-emerald-700/80 dark:text-emerald-400">Confirmed via PayPal Payouts</p>
@@ -535,7 +545,7 @@ export default function CampaignDetail({ id }: { id: number }) {
                   <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-800 dark:text-amber-300">
                     Approved In Queue
                   </span>
-                  <p className="mt-1 text-2xl font-black text-amber-950 dark:text-amber-100">
+                  <p className="mt-1 text-2xl font-black text-amber-950 dark:text-amber-100 tabular-nums">
                     {money(budgetTotals.approvedUnpaid, campaign.currency)}
                   </p>
                   <p className="text-[10px] text-amber-700/80 dark:text-amber-400">Verifier approved, awaiting transfer</p>
@@ -545,10 +555,10 @@ export default function CampaignDetail({ id }: { id: number }) {
                   <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#003087] dark:text-blue-300">
                     Available / Remaining
                   </span>
-                  <p className="mt-1 text-2xl font-black text-[#001435] dark:text-white">
+                  <p className="mt-1 text-2xl font-black text-[#001435] dark:text-white tabular-nums">
                     {money(budgetTotals.remaining, campaign.currency)}
                   </p>
-                  <p className="text-[10px] text-slate-500 dark:text-slate-400">Open for upcoming invoice submissions</p>
+                  <p className="text-[11px] font-medium text-slate-600 dark:text-slate-300">Open for upcoming invoice submissions</p>
                 </div>
               </div>
 
@@ -596,7 +606,7 @@ export default function CampaignDetail({ id }: { id: number }) {
                             <span className="text-sm font-black text-[#001435] dark:text-white">
                               {money(row.planned, campaign.currency)}
                             </span>
-                            <span className="block text-[10px] text-slate-400">
+                            <span className="block text-[11px] font-medium text-slate-600 dark:text-slate-300">
                               {row.invoices.length} invoice{row.invoices.length === 1 ? "" : "s"} &middot; {isExpanded ? "Collapse ▲" : "Details ▼"}
                             </span>
                           </div>
@@ -616,7 +626,7 @@ export default function CampaignDetail({ id }: { id: number }) {
                           />
                         </div>
 
-                        <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
+                        <div className="mt-2 flex items-center justify-between text-[11px] text-slate-600 dark:text-slate-300">
                           <span>Paid: <strong className="text-emerald-700 dark:text-emerald-400">{money(row.paid, campaign.currency)}</strong></span>
                           <span>Approved: <strong className="text-amber-700 dark:text-amber-400">{money(row.approvedUnpaid, campaign.currency)}</strong></span>
                           <span>Remaining: <strong className="text-slate-700 dark:text-slate-200">{money(row.remaining, campaign.currency)}</strong></span>
@@ -626,7 +636,7 @@ export default function CampaignDetail({ id }: { id: number }) {
                       {/* Expandable Invoice Detail List */}
                       {isExpanded && (
                         <div className="mt-4 border-t border-slate-100 pt-3 dark:border-slate-700 space-y-2">
-                          <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                          <p className="text-[10px] font-black uppercase tracking-wider text-slate-600 dark:text-slate-300">
                             Submitted Invoices for {row.line.name}:
                           </p>
                           {row.invoices.length === 0 ? (
@@ -644,6 +654,9 @@ export default function CampaignDetail({ id }: { id: number }) {
                                   <p className="text-[10px] text-slate-500">
                                     {new Date(inv.created_at).toLocaleDateString()} &middot; {inv.vendor_name}
                                   </p>
+                                  {inv.status === "PAID" && <p className="mt-1 text-[10px] text-slate-600">
+                                    <strong>Delivery:</strong> {inv.delivery ? `${inv.delivery.delivered_description} · ${inv.delivery.accepted_at ? `accepted ${new Date(inv.delivery.accepted_at).toLocaleDateString()}` : "awaiting acceptance"}${inv.delivery.remaining_issue ? ` · remaining issue: ${inv.delivery.remaining_issue}` : ""}` : "awaiting vendor report"}
+                                  </p>}
                                 </div>
                                 <div className="flex items-center gap-2">
                                   <StatusBadge status={inv.status} />
@@ -697,7 +710,7 @@ export default function CampaignDetail({ id }: { id: number }) {
                     <strong className="mt-1 block text-sm font-black text-[#001435] dark:text-white">
                       ${tier.amount}
                     </strong>
-                    <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+                    <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">
                       {tier.title}
                     </span>
                   </button>
@@ -768,12 +781,10 @@ export default function CampaignDetail({ id }: { id: number }) {
                     Verified Captured Donors
                   </h2>
                 </div>
-                <Link
-                  href={`/ledger/${campaign.id}`}
-                  className="button-secondary text-xs font-bold"
-                >
-                  Open Full AG Grid Ledger &rarr;
-                </Link>
+                <div className="flex flex-wrap gap-2">
+                  <Link href={`/ledger/${campaign.id}`} className="button-secondary text-xs font-bold">Open Full AG Grid Ledger &rarr;</Link>
+                  {!USE_MOCKS && <a href={api.campaignReportUrl(campaign.id)} className="button-secondary text-xs font-bold">Download campaign report (.csv)</a>}
+                </div>
               </div>
 
               <p className="mt-2 text-xs text-slate-600 dark:text-slate-300">
@@ -798,7 +809,7 @@ export default function CampaignDetail({ id }: { id: number }) {
                         </span>
                         <div>
                           <strong className="text-xs font-bold text-[#001435] dark:text-white">{d.actor_name}</strong>
-                          <span className="block text-[10px] text-slate-400">
+                          <span className="block text-[11px] font-medium text-slate-600 dark:text-slate-300">
                             {new Date(d.created_at).toLocaleDateString()} &middot; Captured
                           </span>
                         </div>
@@ -851,7 +862,7 @@ export default function CampaignDetail({ id }: { id: number }) {
                   <details key={q} className="group py-4">
                     <summary className="cursor-pointer text-sm font-bold text-[#001435] group-open:text-[#0070BA] transition flex items-center justify-between dark:text-white">
                       <span>{q}</span>
-                      <span className="text-slate-400 group-open:rotate-180 transition duration-200">▾</span>
+                      <span className="text-slate-500 group-open:rotate-180 transition duration-200 dark:text-slate-400">▾</span>
                     </summary>
                     <p className="mt-2 text-xs leading-relaxed text-slate-600 dark:text-slate-300 pr-6">
                       {a}
@@ -879,22 +890,25 @@ export default function CampaignDetail({ id }: { id: number }) {
               </div>
 
               <ProgressBar current={fundedAmount} goal={campaign.goal_amount} />
+              <p className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                {donorCount.toLocaleString()} {donorCount === 1 ? "donor has" : "donors have"} contributed
+              </p>
 
               <div className="flex items-baseline justify-between text-xs">
                 <div>
-                  <span className="text-2xl font-black text-[#001435] dark:text-white">
+                  <span className="text-2xl font-black text-[#001435] dark:text-white tabular-nums">
                     {money(fundedAmount, campaign.currency)}
                   </span>
-                  <span className="block text-[11px] text-slate-500">
+                  <span className="block text-[11px] font-medium text-slate-600 dark:text-slate-300 tabular-nums">
                     goal {money(campaign.goal_amount, campaign.currency)}
                   </span>
                 </div>
 
                 <div className="text-right">
-                  <span className="text-sm font-extrabold text-[#0070BA] dark:text-[#38bdf8]">
+                  <span className="text-sm font-extrabold text-[#0070BA] dark:text-[#38bdf8] tabular-nums">
                     {money(campaign.pool_balance, campaign.currency)}
                   </span>
-                  <span className="block text-[10px] text-slate-400">Available in pool</span>
+                  <span className="block text-[11px] font-semibold text-slate-600 dark:text-slate-300">Available in pool</span>
                 </div>
               </div>
 
@@ -910,7 +924,7 @@ export default function CampaignDetail({ id }: { id: number }) {
               <p className="text-xs font-bold text-[#001435] dark:text-white mb-2">
                 Make a Sandbox Donation
               </p>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400 mb-4">
+              <p className="text-xs text-slate-600 dark:text-slate-300 mb-4">
                 Captured via PayPal Orders v2 into campaign pool. Payouts are made directly to vendors.
               </p>
 
@@ -964,7 +978,7 @@ export default function CampaignDetail({ id }: { id: number }) {
                 Buyer &amp; Donor Protection
               </strong>
             </div>
-            <p className="mt-2 text-[11px] leading-relaxed text-slate-600 dark:text-slate-400">
+            <p className="mt-2 text-[11px] leading-relaxed text-slate-600 dark:text-slate-300">
               Donated funds remain in the PayPal Sandbox balance. Only verified invoice submissions with proof of delivery trigger disbursements.
             </p>
           </div>

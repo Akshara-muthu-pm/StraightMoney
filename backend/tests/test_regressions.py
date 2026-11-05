@@ -18,6 +18,9 @@ import main
 from config import settings
 from db import Base, get_db
 from models import BudgetLine, Campaign, Donation, Invoice, StoredFile, Vendor, Verification
+from models import User, UserSession
+from auth import COOKIE_NAME, _digest, _now
+from datetime import timedelta
 from schemas import CampaignCreate, DonationCreate, ExtractionResult, VerificationCreate
 from installments import _apply_status, pay_available
 from payments import PayPalClient, PayPalError, load_env_credentials
@@ -45,10 +48,16 @@ def client(monkeypatch):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     with Session(engine) as db:
-        db.add(Campaign(id=1, title="Test", goal_amount=400, currency="USD", pool_balance=400,
-                        status="active", organizer_name="Organizer"))
+        for user_id, role in ((1, "organizer"), (2, "vendor"), (3, "verifier")):
+            db.add(User(id=user_id, email=f"{role}@example.com", name=role.title(), password_hash="fixture", role=role))
         db.flush()
-        db.add(Vendor(id=1, campaign_id=1, name="Vendor", payout_email="vendor@example.com", status="active"))
+        for user_id, role in ((1, "organizer"), (2, "vendor"), (3, "verifier")):
+            db.add(UserSession(user_id=user_id, token_hash=_digest(f"fixture-{role}"),
+                               expires_at=_now() + timedelta(days=1)))
+        db.add(Campaign(id=1, title="Test", goal_amount=400, currency="USD", pool_balance=400,
+                        status="active", organizer_name="Organizer", organizer_user_id=1))
+        db.flush()
+        db.add(Vendor(id=1, campaign_id=1, name="Vendor", payout_email="vendor@example.com", status="active", user_id=2))
         db.flush()
         db.add(BudgetLine(id=1, campaign_id=1, name="Books", vendor_id=1, budgeted_amount=400, paid_amount=0))
         db.commit()
@@ -62,7 +71,9 @@ def client(monkeypatch):
     monkeypatch.setattr(main.advisory_module, "run_advisory_checks", AsyncMock(return_value=NS(flags=[], summary="Manual review required")))
     monkeypatch.setattr(settings, "verifier_key", "test-key")
     monkeypatch.setattr(main, "paypal", FakePayPal())
-    yield TestClient(main.app), engine, extracted
+    browser = TestClient(main.app)
+    browser.cookies.set(COOKIE_NAME, "fixture-vendor")
+    yield browser, engine, extracted
     main.app.dependency_overrides.clear()
     engine.dispose()
 
@@ -72,6 +83,10 @@ def upload(client, number="FORM-NUMBER", proof=True):
     if proof:
         files["proof_photo"] = ("proof.html", png(), "text/html")
     return client.post("/invoices", data={"campaign_id":1,"budget_line_id":1,"invoice_number":number}, files=files)
+
+
+def as_role(browser, role):
+    browser.cookies.set(COOKIE_NAME, f"fixture-{role}")
 
 
 def test_upload_uses_content_canonical_number_and_database_evidence(client):
@@ -92,7 +107,8 @@ def test_upload_uses_content_canonical_number_and_database_evidence(client):
     duplicate = upload(browser, "DIFFERENT-NUMBER")
     assert duplicate.status_code == 201
     assert duplicate.json()["status"] == "REJECTED"
-    approved = browser.post(f'/invoices/{detail["id"]}/approve', headers={"X-Verifier-Key":"test-key"}, json={"verifier_name":"Reviewer"})
+    as_role(browser, "verifier")
+    approved = browser.post(f'/invoices/{detail["id"]}/approve', json={"verifier_name":"Reviewer"})
     assert approved.status_code == 200, approved.text
     assert approved.json()["status"] == "PAID"
     ledger = browser.get("/campaigns/1/ledger").json()
@@ -122,9 +138,9 @@ def test_approval_rechecks_budget_after_two_uploads(client):
     extracted.invoice_number = "DOCUMENT-2"
     second = upload(browser,"SECOND-FORM").json()
     assert first["status"] == second["status"] == "AWAITING_VERIFIER"
-    headers={"X-Verifier-Key":"test-key"}
-    assert browser.post(f'/invoices/{first["id"]}/approve',headers=headers,json={"verifier_name":"R"}).status_code == 200
-    response = browser.post(f'/invoices/{second["id"]}/approve',headers=headers,json={"verifier_name":"R"})
+    as_role(browser, "verifier")
+    assert browser.post(f'/invoices/{first["id"]}/approve',json={"verifier_name":"R"}).status_code == 200
+    response = browser.post(f'/invoices/{second["id"]}/approve',json={"verifier_name":"R"})
     assert response.status_code == 409
     assert "budget" in response.json()["detail"]
 
@@ -141,6 +157,7 @@ def test_invalid_money_rejected(value):
 
 def test_campaign_rejects_foreign_vendor_assignment(client):
     browser, _, _ = client
+    as_role(browser, "organizer")
     response=browser.post("/campaigns",json={"title":"Other","goal_amount":10,"organizer_name":"O",
         "budget_lines":[{"name":"Books","vendor_id":1,"budgeted_amount":10}]})
     assert response.status_code == 422
@@ -261,6 +278,7 @@ def test_no_key_extraction_does_not_invent_amount():
 
 def test_rate_limit_applies_to_verifier_attempts(client,monkeypatch):
     browser,_,_=client
+    browser.cookies.clear()
     monkeypatch.setattr(settings,"write_rate_limit",1)
     assert browser.post("/invoices/1/approve",json={"verifier_name":"R"}).status_code == 401
     assert browser.post("/invoices/1/approve",json={"verifier_name":"R"}).status_code == 429

@@ -107,6 +107,10 @@ class CampaignCreate(BaseModel):
     budget_lines: list[BudgetLineCreate] = Field(default_factory=list, max_length=100)
 
 
+class CampaignCancellation(BaseModel):
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=5, max_length=2000)]
+
+
 class CampaignOut(BaseModel):
     """Summarised campaign response."""
 
@@ -119,6 +123,8 @@ class CampaignOut(BaseModel):
     currency: str
     pool_balance: float
     status: str
+    cancellation_reason: Optional[str] = None
+    cancelled_at: Optional[UTCDateTime] = None
     organizer_name: str
     created_at: UTCDateTime
 
@@ -166,6 +172,9 @@ class DonationOut(BaseModel):
     status: str
     source: str
     paypal_capture_status: Optional[str] = None
+    unavailable_amount: float = 0.0
+    refund_requested: bool = False
+    refund_processed: bool = False
     created_at: UTCDateTime
 
 
@@ -266,6 +275,25 @@ class PayoutInstallmentOut(PayoutOut):
     pass
 
 
+class DeliveryReport(BaseModel):
+    delivered_description: Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=5000)]
+    delivered_at: UTCDateTime
+
+
+class DeliveryAcceptance(BaseModel):
+    remaining_issue: Optional[str] = Field(default=None, max_length=5000)
+
+
+class DeliveryCloseoutOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    delivered_description: str
+    delivered_at: UTCDateTime
+    accepted_at: Optional[UTCDateTime]
+    remaining_issue: Optional[str]
+    status: str
+
+
 class InvoiceOut(BaseModel):
     """Summarised invoice as returned in list responses."""
 
@@ -289,6 +317,7 @@ class InvoiceOut(BaseModel):
     paid_amount: float = 0.0
     remaining_amount: float = 0.0
     created_at: UTCDateTime
+    delivery: Optional[DeliveryCloseoutOut] = None
 
 
 class InvoiceDetail(InvoiceOut):
@@ -317,6 +346,17 @@ class LedgerEntry(BaseModel):
     source: Optional[str] = None
     created_at: UTCDateTime
     proof_url: Optional[str] = None
+    detail: Optional[str] = None
+    donation_id: Optional[int] = None
+    invoice_id: Optional[int] = None
+
+
+class LedgerQuestion(BaseModel):
+    question: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
+
+
+class LedgerAnswer(BaseModel):
+    answer: str
 
 
 # ---------------------------------------------------------------------------

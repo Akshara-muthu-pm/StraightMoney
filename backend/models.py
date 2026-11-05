@@ -37,6 +37,9 @@ class Campaign(Base):
     pool_balance = Column(Float, default=0.0, nullable=False)
     status = Column(String, default="draft", nullable=False)  # draft | active | closed
     organizer_name = Column(String, nullable=False)
+    organizer_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    cancellation_reason = Column(Text, nullable=True)
+    cancelled_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=_utcnow, nullable=False)
 
     # Relationships
@@ -55,6 +58,7 @@ class Vendor(Base):
     campaign_id = Column(Integer, ForeignKey("campaigns.id"), nullable=False, index=True)
     name = Column(String, nullable=False)
     payout_email = Column(String, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     status = Column(String, default="active", nullable=False)  # active | inactive
     created_at = Column(DateTime, default=_utcnow, nullable=False)
 
@@ -101,10 +105,20 @@ class Donation(Base):
     source = Column(String, default="paypal", nullable=False)  # paypal | simulated
     status = Column(String, default="created", nullable=False)  # created | pending | captured | failed
     paypal_capture_status = Column(String, nullable=True)
+    paypal_capture_id = Column(String(100), nullable=True, index=True)
+    refund_request_id = Column(String(100), nullable=True)
+    refund_start_amount = Column(Float, default=0.0, nullable=False)
+    refund_processed = Column(Boolean, default=False, nullable=False)
+    unavailable_amount = Column(Float, default=0.0, nullable=False)
     created_at = Column(DateTime, default=_utcnow, nullable=False)
 
     # Relationships
     campaign = relationship("Campaign", back_populates="donations")
+    adjustments = relationship("PaymentAdjustment", back_populates="donation", cascade="all, delete-orphan")
+
+    @property
+    def refund_requested(self) -> bool:
+        return self.refund_request_id is not None
 
 
 class Invoice(Base):
@@ -142,6 +156,7 @@ class Invoice(Base):
     verifications = relationship("Verification", back_populates="invoice", cascade="all, delete-orphan")
     payout = relationship("Payout", back_populates="invoice", uselist=False, cascade="all, delete-orphan")
     installments = relationship("PayoutInstallment", back_populates="invoice", cascade="all, delete-orphan")
+    delivery = relationship("DeliveryCloseout", back_populates="invoice", uselist=False, cascade="all, delete-orphan")
 
     @property
     def paid_amount(self) -> float:
@@ -257,3 +272,87 @@ class AuditLog(Base):
     actor = Column(String, nullable=False)
     action = Column(String, nullable=False)
     detail = Column(Text, nullable=True)
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True)
+    email = Column(String(254), unique=True, nullable=False, index=True)
+    name = Column(String(200), nullable=False)
+    password_hash = Column(String(200), nullable=False)
+    role = Column(String(20), nullable=False)  # organizer | vendor | verifier
+    created_at = Column(DateTime, default=_utcnow, nullable=False)
+
+
+class UserSession(Base):
+    __tablename__ = "user_sessions"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    token_hash = Column(String(64), unique=True, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=_utcnow, nullable=False)
+
+
+class VendorInvite(Base):
+    __tablename__ = "vendor_invites"
+
+    id = Column(Integer, primary_key=True)
+    vendor_id = Column(Integer, ForeignKey("vendors.id"), nullable=False, index=True)
+    token_hash = Column(String(64), unique=True, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False)
+    used_at = Column(DateTime, nullable=True)
+
+
+class WebhookEvent(Base):
+    __tablename__ = "webhook_events"
+
+    id = Column(String(100), primary_key=True)
+    event_type = Column(String(100), nullable=False)
+    status = Column(String(30), nullable=False)
+    received_at = Column(DateTime, default=_utcnow, nullable=False)
+
+
+class ReconciliationIssue(Base):
+    __tablename__ = "reconciliation_issues"
+
+    id = Column(Integer, primary_key=True)
+    event_id = Column(String(100), nullable=False, index=True)
+    campaign_id = Column(Integer, nullable=True, index=True)
+    reference = Column(String(100), nullable=True)
+    detail = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=_utcnow, nullable=False)
+
+
+class DeliveryCloseout(Base):
+    __tablename__ = "delivery_closeouts"
+
+    id = Column(Integer, primary_key=True)
+    invoice_id = Column(Integer, ForeignKey("invoices.id"), unique=True, nullable=False)
+    delivered_description = Column(Text, nullable=False)
+    delivered_at = Column(DateTime, nullable=False)
+    reported_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    accepted_at = Column(DateTime, nullable=True)
+    accepted_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    remaining_issue = Column(Text, nullable=True)
+    status = Column(String(30), nullable=False, default="reported")
+    created_at = Column(DateTime, default=_utcnow, nullable=False)
+
+    invoice = relationship("Invoice", back_populates="delivery")
+
+
+class PaymentAdjustment(Base):
+    __tablename__ = "payment_adjustments"
+
+    id = Column(Integer, primary_key=True)
+    donation_id = Column(Integer, ForeignKey("donations.id"), nullable=False, index=True)
+    kind = Column(String(20), nullable=False)  # refund | dispute
+    reference = Column(String(150), unique=True, nullable=False)
+    amount = Column(Float, nullable=False)
+    status = Column(String(40), nullable=False)
+    detail = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=_utcnow, nullable=False)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    donation = relationship("Donation", back_populates="adjustments")

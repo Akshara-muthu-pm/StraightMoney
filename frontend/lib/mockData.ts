@@ -24,6 +24,30 @@ export const mockCampaign: Campaign = {
   ],
 };
 
+export const mockStartupCampaign: Campaign = {
+  id: 2,
+  title: "AeroDrone Ag - Autonomous Precision Drone",
+  description: "Hardware venture building autonomous precision spraying drones for sustainable agriculture. Capital is held in PayPal Sandbox escrow. Funds disburse in tranches only after airframe dimensional test reports and motor bench test photos pass AI and human verification.",
+  goal_amount: 12500,
+  currency: "USD",
+  pool_balance: 0,
+  status: "active",
+  organizer_name: "AeroSky BioSystems Lab",
+  created_at: created,
+  vendors: [
+    { id: 4, campaign_id: 2, name: "AeroFab Machining Co.", payout_email: "aerofab@example.com", status: "active", created_at: created },
+    { id: 5, campaign_id: 2, name: "TorqueDrive Dynamics", payout_email: "motors@example.com", status: "active", created_at: created },
+    { id: 6, campaign_id: 2, name: "SpectraVision Labs", payout_email: "spectravision@example.com", status: "active", created_at: created },
+  ],
+  budget_lines: [
+    { id: 4, campaign_id: 2, name: "Carbon-Fiber Airframe & Folding Arm Machining", vendor_id: 4, vendor_name: "AeroFab Machining Co.", budgeted_amount: 3500, paid_amount: 0, created_at: created },
+    { id: 5, campaign_id: 2, name: "High-Torque Brushless Motors & 80A ESC Units", vendor_id: 5, vendor_name: "TorqueDrive Dynamics", budgeted_amount: 4800, paid_amount: 0, created_at: created },
+    { id: 6, campaign_id: 2, name: "Multispectral Crop Health Sensor & Telemetry Pack", vendor_id: 6, vendor_name: "SpectraVision Labs", budgeted_amount: 4200, paid_amount: 0, created_at: created },
+  ],
+};
+
+export const mockCampaigns: Campaign[] = [mockCampaign, mockStartupCampaign];
+
 export const mockDonations: Donation[] = [
   { id: 1, campaign_id: 1, donor_name: "Alice Johnson", amount: 500, currency: "USD", paypal_order_id: "DEMO-ORDER-001", source: "simulated", status: "captured", created_at: "2026-10-29T11:00:00Z" },
   { id: 2, campaign_id: 1, donor_name: "Bob Smith", amount: 400, currency: "USD", paypal_order_id: "DEMO-ORDER-002", source: "simulated", status: "captured", created_at: "2026-10-29T12:00:00Z" },

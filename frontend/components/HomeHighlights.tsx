@@ -94,7 +94,7 @@ export default function HomeHighlights() {
         ))}
       </div>
 
-      <p className="mt-4 text-[11px] text-slate-400">Illustrative photographs of community giving and volunteer partnerships.</p>
+      <p className="mt-4 text-xs font-medium text-slate-600 dark:text-slate-300">Illustrative photographs of community giving and volunteer partnerships.</p>
 
       <div className="impact-summary mt-8">
         <div>

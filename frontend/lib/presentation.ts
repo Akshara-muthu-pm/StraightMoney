@@ -1,5 +1,16 @@
 import type { Campaign, Invoice } from "./types";
 
+export type BudgetLineStatus = "paid" | "rejected" | "awaiting-vendor" | "in-review";
+
+export function budgetLineStatus(lineId: number, invoices: Invoice[]): BudgetLineStatus {
+  const relevant = invoices.filter((invoice) => invoice.budget_line_id === lineId);
+  if (relevant.length === 0) return "awaiting-vendor";
+  const rejected = (invoice: Invoice) => invoice.status === "REJECTED" || invoice.status === "VERIFIER_REJECTED";
+  if (relevant.some((invoice) => !rejected(invoice) && invoice.status !== "PAID")) return "in-review";
+  if (relevant.some((invoice) => invoice.status === "PAID")) return "paid";
+  return "rejected";
+}
+
 export const money = (value: number, currency = "USD") => new Intl.NumberFormat("en-US", { style: "currency", currency }).format(value);
 export const totalFunded = (campaign: Campaign) => campaign.pool_balance + campaign.budget_lines.reduce((sum, line) => sum + line.paid_amount, 0);
 export function invoiceStages(invoice: Invoice) {

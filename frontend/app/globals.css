@@ -198,13 +198,41 @@ body {
 }
 
 .liquid-glass:hover, .surface-card:hover {
-  transform: translateY(-3px);
   box-shadow:
     inset 0 1.5px 1px 0 rgba(255, 255, 255, 1),
     inset 0 -1.5px 1px 0 rgba(0, 112, 186, 0.12),
     0 28px 60px -12px rgba(0, 48, 135, 0.14),
     0 8px 24px -2px rgba(0, 20, 53, 0.05);
   border-color: rgba(0, 112, 186, 0.45);
+}
+
+a.liquid-glass:hover,
+button.liquid-glass:hover,
+.liquid-glass.interactive:hover,
+a.surface-card:hover,
+button.surface-card:hover,
+.surface-card.interactive:hover {
+  transform: translateY(-3px);
+}
+
+/* Liquid Dark Glass Surfaces (Dark Mode Refraction) */
+[data-theme="dark"] .liquid-glass,
+[data-theme="dark"] .surface-card,
+.dark .liquid-glass,
+.dark .surface-card {
+  background: linear-gradient(
+    135deg,
+    rgba(0, 28, 72, 0.92) 0%,
+    rgba(0, 20, 55, 0.88) 50%,
+    rgba(0, 36, 85, 0.82) 100%
+  ) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  box-shadow:
+    inset 0 1.5px 1px 0 rgba(255, 255, 255, 0.15),
+    inset 0 -1.5px 1px 0 rgba(0, 0, 0, 0.5),
+    0 24px 60px -12px rgba(0, 0, 0, 0.6),
+    0 4px 16px -2px rgba(0, 0, 0, 0.4) !important;
+  color: #f1f5f9 !important;
 }
 
 /* Liquid Shimmer Sweep */
@@ -363,19 +391,6 @@ body {
   100% { background-position: 100% 0; }
 }
 
-/* Floating Glass Header */
-.site-header {
-  position: sticky;
-  top: 0;
-  z-index: 40;
-  background: rgba(255, 255, 255, 0.82);
-  -webkit-backdrop-filter: blur(30px) saturate(200%);
-  backdrop-filter: blur(30px) saturate(200%);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.85);
-  box-shadow:
-    inset 0 -1px 0 rgba(0, 48, 135, 0.04),
-    0 8px 30px rgba(0, 20, 53, 0.04);
-}
 
 /* Liquid Pill Buttons (PayPal Signature Geometry) */
 .button-primary, .button-secondary, .button-light, .button-gold {
@@ -1295,19 +1310,19 @@ main:focus { outline: none; }
 .dark .surface-card {
   background: linear-gradient(
     135deg,
-    rgba(0, 20, 53, 0.88) 0%,
-    rgba(0, 32, 85, 0.76) 48%,
-    rgba(0, 48, 135, 0.66) 100%
-  );
+    rgba(0, 28, 72, 0.92) 0%,
+    rgba(0, 20, 55, 0.88) 50%,
+    rgba(0, 36, 85, 0.82) 100%
+  ) !important;
   -webkit-backdrop-filter: blur(36px) saturate(220%);
   backdrop-filter: blur(36px) saturate(220%);
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
   box-shadow:
-    inset 0 1.5px 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 1.5px 1px 0 rgba(255, 255, 255, 0.15),
     inset 0 -1.5px 1px 0 rgba(0, 0, 0, 0.5),
     0 24px 60px -12px rgba(0, 0, 0, 0.6),
-    0 4px 16px -2px rgba(0, 0, 0, 0.4);
-  color: #f1f5f9;
+    0 4px 16px -2px rgba(0, 0, 0, 0.4) !important;
+  color: #f1f5f9 !important;
 }
 
 [data-theme="dark"] .liquid-glass:hover,
@@ -1399,6 +1414,12 @@ main:focus { outline: none; }
 .dark .site-header nav a:not(.button-gold):hover {
   background-color: rgba(255, 255, 255, 0.08);
   color: #38bdf8;
+}
+
+[data-theme="dark"] .site-header nav a[aria-current="page"],
+.dark .site-header nav a[aria-current="page"] {
+  background-color: #0070ba !important;
+  color: #ffffff !important;
 }
 
 /* Theme Toggle Button */

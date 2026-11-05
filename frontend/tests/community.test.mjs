@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createDemoState, parseDemoState, toggleFollow, addReceipt, demoRoles } from "../lib/demo-state.ts";
-import { invoiceStages, totalFunded } from "../lib/presentation.ts";
+import { budgetLineStatus, invoiceStages, totalFunded } from "../lib/presentation.ts";
 import { budgetSummary } from "../lib/budget.ts";
 import { campaignImagery } from "../lib/campaign-imagery.ts";
 import { impactShapes, interpolatePoints, shapePath } from "../lib/impact-motion.ts";
@@ -93,6 +93,15 @@ test("a partial payment or sandbox override cannot look fully paid", () => {
 test("rejected invoices do not appear approved", () => {
   assert.deepEqual(invoiceStages({ ...invoice, status: "REJECTED" }), { review: "Policy rejected", payment: "Not paid" });
   assert.deepEqual(invoiceStages({ ...invoice, status: "VERIFIER_REJECTED" }), { review: "Verifier rejected", payment: "Not paid" });
+});
+test("budget line badges use the existing invoices and keep unfinished work visible", () => {
+  const row = (budget_line_id, status) => ({ budget_line_id, status });
+  assert.equal(budgetLineStatus(1, []), "awaiting-vendor");
+  assert.equal(budgetLineStatus(1, [row(1, "REJECTED"), row(2, "PAID")]), "rejected");
+  assert.equal(budgetLineStatus(1, [row(1, "VERIFIER_REJECTED")]), "rejected");
+  assert.equal(budgetLineStatus(1, [row(1, "PAID"), row(1, "REJECTED")]), "paid");
+  assert.equal(budgetLineStatus(1, [row(1, "PAID"), row(1, "PAYOUT_PENDING")]), "in-review");
+  assert.equal(budgetLineStatus(1, [row(1, "AWAITING_VERIFIER")]), "in-review");
 });
 test("budget separates approved commitments from confirmed payouts", () => {
   const line = { id: 1, budgeted_amount: 600, paid_amount: 100 };

@@ -1,5 +1,5 @@
-import { mockCampaign, mockInvoices, mockLedger } from "./mockData";
-import type { Campaign, CampaignCreate, CampaignSummary, Donation, Invoice, LedgerEntry, VerificationRequest } from "./types";
+import { mockCampaign, mockCampaigns, mockInvoices, mockLedger } from "./mockData";
+import type { Campaign, CampaignCreate, CampaignSummary, DeliveryCloseout, Donation, DonationStatus, DonorUpdate, Invoice, LedgerEntry, VerificationRequest } from "./types";
 
 export const USE_MOCKS = process.env.NEXT_PUBLIC_USE_MOCKS === "true";
 export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
@@ -22,13 +22,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
     const isRead = !init?.method || init.method === "GET";
-    response = await fetch(`${API_URL}${path}`, { ...init, signal: init?.signal ?? AbortSignal.timeout(isRead ? 12000 : 180000) });
+    response = await fetch(`${API_URL}${path}`, { ...init, credentials: "include", signal: init?.signal ?? AbortSignal.timeout(isRead ? 12000 : 180000) });
   } catch (cause) {
     if (path === "/campaigns" || /^\/campaigns\/\d+$/.test(path)) {
       throw new Error("Live campaigns are unavailable. Donation checkout is paused until the campaign service is running. Please try again shortly.");
     }
     if (path.includes("/donations") || path.endsWith("/donate")) {
       throw new Error(`Could not reach the donation API at ${API_URL}. Make sure the backend is running. If you already approved a PayPal payment, check the public ledger before trying again.`);
+    }
+    if (path.endsWith("/ledger/ask")) {
+      throw new Error("Could not reach the ledger question service. Please try again shortly.");
     }
     if (cause instanceof Error && cause.name === "TimeoutError") {
       throw new Error("The API took too long to respond. Refresh the invoice before trying again; the payment may still be pending.");
@@ -46,8 +49,24 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  listCampaigns: async (): Promise<CampaignSummary[]> => USE_MOCKS ? [mockCampaign] : request<CampaignSummary[]>("/campaigns"),
-  getCampaign: async (id: number): Promise<Campaign> => USE_MOCKS ? id === mockCampaign.id ? mockCampaign : Promise.reject(new Error("Campaign not found in demo data.")) : request<Campaign>(`/campaigns/${id}`),
+  currentAccount: (): Promise<{ id: number; email: string; name: string; role: "organizer" | "vendor" | "verifier" }> => request("/auth/me"),
+  login: (email: string, password: string) => request<{ id: number; email: string; name: string; role: "organizer" | "vendor" | "verifier" }>("/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password }) }),
+  registerAccount: (kind: "organizer" | "vendor" | "verifier", data: Record<string, string>) => request<{ id: number; email: string; name: string; role: "organizer" | "vendor" | "verifier" }>(`/auth/register-${kind}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) }),
+  logout: () => request<{ signed_out: boolean }>("/auth/logout", { method: "POST" }),
+  myCampaigns: () => request<CampaignSummary[]>("/auth/my-campaigns"),
+  myVendors: () => request<Array<{ id: number; campaign_id: number }>>("/auth/my-vendors"),
+  inviteVendor: (campaignId: number, vendorId: number) => request<{ email: string; invite_token: string; expires_in_days: number }>(`/auth/campaigns/${campaignId}/vendors/${vendorId}/invite`, { method: "POST" }),
+  acceptVendorInvite: (inviteToken: string) => request<{ campaign_id: number; vendor_id: number }>("/auth/accept-vendor-invite", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ invite_token: inviteToken }) }),
+  claimCampaign: (campaignId: number, setupKey: string) => request<{ campaign_id: number; organizer: string }>(`/auth/campaigns/${campaignId}/claim`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ setup_key: setupKey }) }),
+  reconciliationIssues: () => request<Array<{ id: number; event_id: string; campaign_id: number | null; reference: string | null; detail: string; created_at: string }>>("/auth/reconciliation-issues"),
+  listCampaigns: async (): Promise<CampaignSummary[]> => USE_MOCKS ? mockCampaigns : request<CampaignSummary[]>("/campaigns"),
+  getCampaign: async (id: number): Promise<Campaign> => {
+    if (USE_MOCKS) {
+      const match = mockCampaigns.find((c) => c.id === id);
+      return match ? match : Promise.reject(new Error("Campaign not found in demo data."));
+    }
+    return request<Campaign>(`/campaigns/${id}`);
+  },
   getInvoices: async (campaignId?: number, status?: string): Promise<Invoice[]> => {
     if (USE_MOCKS) return mockInvoices.filter((invoice) => (campaignId === undefined || invoice.campaign_id === campaignId) && (!status || invoice.status === status));
     const query = new URLSearchParams();
@@ -57,12 +76,23 @@ export const api = {
   },
   getInvoice: async (id: number): Promise<Invoice> => USE_MOCKS ? mockInvoices.find((invoice) => invoice.id === id)! : request<Invoice>(`/invoices/${id}`),
   getLedger: async (campaignId: number): Promise<LedgerEntry[]> => USE_MOCKS ? mockLedger : request<LedgerEntry[]>(`/campaigns/${campaignId}/ledger`),
+  askLedger: (campaignId: number, question: string): Promise<{ answer: string }> => USE_MOCKS
+    ? Promise.reject(new Error("Ledger questions need the live API and Gemini."))
+    : request<{ answer: string }>(`/campaigns/${campaignId}/ledger/ask`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question }) }),
   assetUrl: (path: string | null): string | null => path && !USE_MOCKS ? `${API_URL}/${path.replace(/^\//, "")}` : null,
   createCampaign: (data: CampaignCreate): Promise<Campaign> => USE_MOCKS ? Promise.resolve(mockCampaign) : request<Campaign>("/campaigns", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) }),
+  cancelCampaign: (id: number, reason: string): Promise<Campaign> => request<Campaign>(`/campaigns/${id}/cancel`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason }) }),
+  organizerDonations: (id: number): Promise<Donation[]> => request<Donation[]>(`/campaigns/${id}/donations`),
+  refundDonation: (id: number): Promise<Donation> => request<Donation>(`/donations/${id}/refund`, { method: "POST" }),
   createDonation: (campaignId: number, donor_name: string, amount: number, simulate: boolean = false): Promise<Donation> => USE_MOCKS ? Promise.resolve({ id: 99, campaign_id: campaignId, donor_name, amount, currency: "USD", paypal_order_id: `MOCK-ORDER-${Date.now()}`, source: simulate ? "simulated" : "paypal", status: "created", created_at: new Date().toISOString() }) : request<Donation>(`/campaigns/${campaignId}/donations`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ donor_name, amount, simulate }) }),
   captureDonation: (orderId: string): Promise<Donation> => USE_MOCKS ? Promise.resolve({ id: 99, campaign_id: 1, donor_name: "Demo Donor", amount: 0, currency: "USD", paypal_order_id: orderId, source: "paypal", status: "captured", created_at: new Date().toISOString() }) : request<Donation>(`/donations/${orderId}/capture`, { method: "POST" }),
+  donationStatus: (orderId: string): Promise<DonationStatus> => request<DonationStatus>(`/donations/${encodeURIComponent(orderId)}/status`),
+  donorUpdates: (orderId: string): Promise<DonorUpdate[]> => USE_MOCKS ? Promise.resolve([]) : request<DonorUpdate[]>(`/donations/${encodeURIComponent(orderId)}/updates`),
+  campaignReportUrl: (campaignId: number): string => `${API_URL}/campaigns/${campaignId}/report.csv`,
   uploadInvoice: (form: FormData): Promise<Invoice> => USE_MOCKS ? Promise.resolve(mockInvoices[0]) : request<Invoice>("/invoices", { method: "POST", body: form }),
-  approveInvoice: (id: number, data: VerificationRequest, verifierKey: string): Promise<Invoice> => USE_MOCKS ? Promise.resolve(mockInvoices[0]) : request<Invoice>(`/invoices/${id}/approve`, { method: "POST", headers: { "Content-Type": "application/json", "X-Verifier-Key": verifierKey }, body: JSON.stringify(data) }),
-  rejectInvoice: (id: number, data: VerificationRequest, verifierKey: string): Promise<Invoice> => USE_MOCKS ? Promise.resolve(mockInvoices[0]) : request<Invoice>(`/invoices/${id}/reject`, { method: "POST", headers: { "Content-Type": "application/json", "X-Verifier-Key": verifierKey }, body: JSON.stringify(data) }),
-  retryInvoice: (id: number, data: VerificationRequest, verifierKey: string): Promise<Invoice> => USE_MOCKS ? Promise.resolve(mockInvoices[0]) : request<Invoice>(`/invoices/${id}/retry`, { method: "POST", headers: { "Content-Type": "application/json", "X-Verifier-Key": verifierKey }, body: JSON.stringify(data) }),
+  reportDelivery: (id: number, delivered_description: string, delivered_at: string): Promise<DeliveryCloseout> => request<DeliveryCloseout>(`/invoices/${id}/delivery`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ delivered_description, delivered_at }) }),
+  acceptDelivery: (id: number, remaining_issue: string): Promise<DeliveryCloseout> => request<DeliveryCloseout>(`/invoices/${id}/delivery/accept`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ remaining_issue }) }),
+  approveInvoice: (id: number, data: VerificationRequest): Promise<Invoice> => USE_MOCKS ? Promise.resolve(mockInvoices[0]) : request<Invoice>(`/invoices/${id}/approve`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) }),
+  rejectInvoice: (id: number, data: VerificationRequest): Promise<Invoice> => USE_MOCKS ? Promise.resolve(mockInvoices[0]) : request<Invoice>(`/invoices/${id}/reject`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) }),
+  retryInvoice: (id: number, data: VerificationRequest): Promise<Invoice> => USE_MOCKS ? Promise.resolve(mockInvoices[0]) : request<Invoice>(`/invoices/${id}/retry`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) }),
 };

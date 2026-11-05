@@ -287,35 +287,56 @@ export default function StartupsPage() {
               StraightMoney eliminates the lump-sum risk in venture crowdfunding. Backers pledge into PayPal Sandbox escrow; capital is paid directly to prototyping labs, component suppliers, and fabricators only when verifiable deliverables pass AI and policy checks.
             </p>
 
-            {/* Waitlist Subscription Box */}
-            <div className="mt-8 max-w-md">
-              {subscribed ? (
-                <div className="rounded-2xl border border-emerald-400/50 bg-emerald-950/70 p-4 text-emerald-200 backdrop-blur-md">
-                  <p className="text-xs font-black uppercase tracking-wider text-emerald-400">
-                    You&apos;re on the early-access list!
-                  </p>
-                  <p className="mt-1 text-xs text-emerald-100/90">
-                    We&apos;ll notify you at <strong className="text-white">{waitlistEmail}</strong> when startup milestone escrow opens for backer pledges.
-                  </p>
-                </div>
-              ) : (
-                <form onSubmit={handleSubmit} className="flex flex-col gap-2.5 sm:flex-row">
-                  <input
-                    type="email"
-                    required
-                    value={waitlistEmail}
-                    onChange={(e) => setWaitlistEmail(e.target.value)}
-                    placeholder="Enter email for backer or founder access..."
-                    className="flex-1 rounded-full border border-white/30 bg-white/15 px-4 py-3 text-xs text-white placeholder:text-blue-200 focus:border-[#FFC439] focus:bg-white/20 focus:outline-none"
-                  />
-                  <button
-                    type="submit"
-                    className="button-gold rounded-full px-6 py-3 text-xs font-black whitespace-nowrap shadow-md shadow-[#FFC439]/30 transition hover:scale-105"
-                  >
-                    Get Early Access &rarr;
-                  </button>
-                </form>
-              )}
+            {/* Startup Backer Actions */}
+            <div className="mt-8 space-y-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <Link
+                  href="/campaigns/2#donate"
+                  className="button-gold rounded-full px-6 py-3.5 text-xs font-black shadow-lg shadow-[#FFC439]/30 transition hover:scale-105 inline-flex items-center gap-2"
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+                  </svg>
+                  <span>Donate via PayPal &rarr; Back AeroDrone Ag ($25+)</span>
+                </Link>
+                <Link
+                  href="/campaigns/2"
+                  className="rounded-full border border-white/30 bg-white/10 px-5 py-3.5 text-xs font-bold text-white backdrop-blur-md transition hover:bg-white/20"
+                >
+                  View Active Campaign
+                </Link>
+              </div>
+
+              {/* Waitlist Subscription Box */}
+              <div className="max-w-md pt-2">
+                {subscribed ? (
+                  <div className="rounded-2xl border border-emerald-400/50 bg-emerald-950/70 p-3.5 text-emerald-200 backdrop-blur-md">
+                    <p className="text-xs font-black uppercase tracking-wider text-emerald-400">
+                      ✓ You&apos;re on the early-access backer list!
+                    </p>
+                    <p className="mt-1 text-xs text-emerald-100/90">
+                      We&apos;ll notify you at <strong className="text-white">{waitlistEmail}</strong> when new startup milestone escrow rounds open.
+                    </p>
+                  </div>
+                ) : (
+                  <form onSubmit={handleSubmit} className="flex flex-col gap-2.5 sm:flex-row">
+                    <input
+                      type="email"
+                      required
+                      value={waitlistEmail}
+                      onChange={(e) => setWaitlistEmail(e.target.value)}
+                      placeholder="Enter email for backer alerts..."
+                      className="flex-1 rounded-full border border-white/30 bg-white/15 px-4 py-3 text-xs text-white placeholder:text-blue-200 focus:border-[#FFC439] focus:bg-white/20 focus:outline-none"
+                    />
+                    <button
+                      type="submit"
+                      className="rounded-full border border-white/30 bg-white/15 px-5 py-3 text-xs font-bold text-white transition hover:bg-white/25"
+                    >
+                      Get Alerts
+                    </button>
+                  </form>
+                )}
+              </div>
             </div>
           </div>
 
@@ -470,14 +491,25 @@ export default function StartupsPage() {
                 </h3>
               </div>
 
-              <div className="rounded-2xl border border-slate-200/90 bg-slate-50 p-4 text-right dark:border-slate-700 dark:bg-slate-800">
-                <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
-                  Target Escrow Cap
-                </span>
-                <p className="text-2xl font-black text-[#001435] dark:text-white">{selectedCase.goal}</p>
-                <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
-                  {selectedCase.percent}% Backed in Sandbox
-                </span>
+              <div className="flex flex-col items-end gap-2.5">
+                <div className="rounded-2xl border border-slate-200/90 bg-slate-50 p-4 text-right dark:border-slate-700 dark:bg-slate-800">
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+                    Target Escrow Cap
+                  </span>
+                  <p className="text-2xl font-black text-[#001435] dark:text-white">{selectedCase.goal}</p>
+                  <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                    {selectedCase.percent}% Backed in Sandbox
+                  </span>
+                </div>
+                <Link
+                  href="/campaigns/2#donate"
+                  className="button-gold rounded-full px-5 py-2.5 text-xs font-black shadow-md shadow-[#FFC439]/30 transition hover:scale-105 inline-flex items-center gap-1.5"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+                  </svg>
+                  <span>Donate via PayPal &rarr; Back Case</span>
+                </Link>
               </div>
             </div>
 

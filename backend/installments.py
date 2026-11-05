@@ -61,7 +61,8 @@ def _apply_status(db: Session, part: PayoutInstallment, response: dict) -> None:
         invoice.status = "PAYOUT_PENDING"
     audit.log(db, actor="system", action=f"payout.{part.status}", campaign_id=invoice.campaign_id,
               invoice_id=invoice.id, detail={"installment_id": part.id, "amount": part.amount,
-                                             "paypal_batch_id": part.paypal_batch_id}, commit=False)
+                                             "paypal_batch_id": part.paypal_batch_id,
+                                             "invoice_status": invoice.status}, commit=False)
     db.commit()
 
 

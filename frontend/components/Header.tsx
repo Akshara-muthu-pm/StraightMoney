@@ -4,6 +4,7 @@ import { useSyncExternalStore } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useDemoSession, signOutDemo } from "@/lib/demo-session";
+import { useAccount, signOutAccount } from "@/lib/account-session";
 import { demoRoles } from "@/lib/demo-state";
 import { useTheme } from "@/components/ThemeProvider";
 
@@ -21,9 +22,11 @@ export default function Header() {
   const pathname = usePathname();
   const router = useRouter();
   const session = useDemoSession();
+  const account = useAccount();
+  const active = account ? { name: account.name, role: account.role[0].toUpperCase() + account.role.slice(1) } : session;
   const { resolvedTheme, toggleTheme } = useTheme();
   const mounted = useIsMounted();
-  const dashboard = demoRoles.find((role) => role.name === session?.role)?.path ?? "/signin";
+  const dashboard = demoRoles.find((role) => role.name === active?.role)?.path ?? "/signin";
 
   return (
     <header className="site-header">
@@ -60,24 +63,32 @@ export default function Header() {
           </span>
         </Link>
         <nav aria-label="Main navigation" className="flex flex-wrap items-center gap-2 text-sm font-semibold sm:gap-3.5">
-          <Link href="/explore" className="rounded-full px-3.5 py-1.5 text-xs font-bold text-slate-700 transition hover:bg-white/80 hover:text-[#003087] hover:shadow-sm">
+          <Link
+            href="/explore"
+            aria-current={pathname.startsWith("/explore") ? "page" : undefined}
+            className={`rounded-full px-3.5 py-1.5 text-xs font-bold transition ${
+              pathname.startsWith("/explore")
+                ? "bg-[#003087] text-white shadow-sm"
+                : "text-slate-700 hover:bg-white/80 hover:text-[#003087] hover:shadow-sm"
+            }`}
+          >
             Explore campaigns
           </Link>
           <Link href="/#how-it-works" className="rounded-full px-3.5 py-1.5 text-xs font-bold text-slate-700 transition hover:bg-white/80 hover:text-[#003087] hover:shadow-sm">
             How it works
           </Link>
-          {session ? (
+          {active ? (
             <details className="account-menu">
               <summary className="cursor-pointer flex items-center gap-2 rounded-full border border-white/80 bg-white/70 px-3.5 py-1.5 backdrop-blur-md shadow-sm transition hover:bg-white hover:border-blue-200">
                 <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#003087] text-[10px] font-black text-white">
-                  {session.name.charAt(0).toUpperCase()}
+                  {active.name.charAt(0).toUpperCase()}
                 </span>
-                <span className="block text-xs font-extrabold text-[#001435]">{session.name}</span>
-                <span className="rounded-full bg-[#E1F0FC] px-2 py-0.2 text-[10px] font-bold text-[#003087]">{session.role}</span>
+                <span className="block text-xs font-extrabold text-[#001435]">{active.name}</span>
+                <span className="rounded-full bg-[#E1F0FC] px-2 py-0.2 text-[10px] font-bold text-[#003087]">{active.role}</span>
               </summary>
               <div className="account-popover">
                 <div className="border-b border-slate-100 px-3 py-2 text-xs font-semibold text-slate-500">
-                  WORKSPACE: <span className="text-[#003087] font-extrabold">{session.role}</span>
+                  WORKSPACE: <span className="text-[#003087] font-extrabold">{active.role}</span>
                 </div>
                 <Link href={dashboard} className="mt-1 block rounded-xl px-3 py-2.5 text-xs font-bold text-slate-800 transition hover:bg-blue-50 hover:text-[#003087]">
                   My dashboard &rarr;
@@ -85,7 +96,7 @@ export default function Header() {
                 <button
                   type="button"
                   className="w-full rounded-xl px-3 py-2.5 text-left text-xs font-bold text-slate-700 transition hover:bg-rose-50 hover:text-rose-700"
-                  onClick={() => { signOutDemo(); router.push("/"); }}
+                  onClick={() => { if (account) void signOutAccount(); else signOutDemo(); router.push("/"); }}
                 >
                   Sign out
                 </button>
@@ -95,7 +106,11 @@ export default function Header() {
             <Link
               href="/signin"
               aria-current={pathname === "/signin" ? "page" : undefined}
-              className="rounded-full px-3.5 py-1.5 text-xs font-bold text-slate-700 transition hover:bg-white/80 hover:text-[#003087]"
+              className={`rounded-full px-3.5 py-1.5 text-xs font-bold transition ${
+                pathname === "/signin"
+                  ? "bg-[#003087] text-white shadow-sm"
+                  : "text-slate-700 hover:bg-white/80 hover:text-[#003087]"
+              }`}
             >
               Sign in
             </Link>

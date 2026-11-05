@@ -4,23 +4,45 @@ import { useMemo, useState } from "react";
 import { AgGridReact } from "ag-grid-react";
 import { AllCommunityModule, ModuleRegistry, themeQuartz, type ColDef } from "ag-grid-community";
 import type { LedgerEntry } from "@/lib/types";
-import { api } from "@/lib/api";
+import { api, USE_MOCKS } from "@/lib/api";
 import { useTheme } from "@/components/ThemeProvider";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
-export default function LedgerGrid({ entries }: { entries: LedgerEntry[] }) {
+export default function LedgerGrid({ campaignId, entries }: { campaignId: number; entries: LedgerEntry[] }) {
   const { isDark } = useTheme();
   const [query, setQuery] = useState("");
   const [type, setType] = useState("");
   const [simpleView, setSimpleView] = useState(false);
-  const filtered = entries.filter((entry) => (!type || entry.type === type) && `${entry.actor_name} ${entry.type} ${entry.status}`.toLowerCase().includes(query.trim().toLowerCase()));
+  const [question, setQuestion] = useState("");
+  const [answer, setAnswer] = useState("");
+  const [askError, setAskError] = useState("");
+  const [asking, setAsking] = useState(false);
+
+  async function handleAsk(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const submitted = question.trim();
+    if (!submitted || asking || USE_MOCKS) return;
+    setAsking(true);
+    setAnswer("");
+    setAskError("");
+    try {
+      const result = await api.askLedger(campaignId, submitted);
+      setAnswer(result.answer);
+    } catch (cause) {
+      setAskError(cause instanceof Error ? cause.message : "Could not answer that question.");
+    } finally {
+      setAsking(false);
+    }
+  }
+  const filtered = entries.filter((entry) => (!type || entry.type === type) && `${entry.actor_name} ${entry.type} ${entry.status} ${entry.detail ?? ""}`.toLowerCase().includes(query.trim().toLowerCase()));
   const columns = useMemo<ColDef<LedgerEntry>[]>(() => [
     { field: "created_at", headerName: "Date", valueFormatter: ({ value }) => value ? new Date(value as string).toLocaleDateString() : "", minWidth: 130 },
     { field: "type", headerName: "Type", minWidth: 110 },
     { field: "actor_name", headerName: "From / to", minWidth: 170 },
     { field: "amount", headerName: "Amount", valueFormatter: ({ value }) => `$${Number(value).toFixed(2)}`, minWidth: 130 },
     { field: "status", headerName: "Status", valueGetter: ({ data }) => data ? `${data.status}${data.source === "simulated" ? " · SIMULATED" : ""}` : "", minWidth: 160 },
+    { field: "detail", headerName: "Outcome / delivery", minWidth: 260, flex: 1 },
     { field: "proof_url", headerName: "Proof", cellRenderer: ({ value }: { value: string | null }) => { const url = api.assetUrl(value); return url ? <a className="font-medium text-brand-700 underline" href={url} target="_blank" rel="noreferrer">View proof</a> : <span className="text-slate-400">—</span>; }, minWidth: 120 },
   ], []);
 
@@ -86,7 +108,7 @@ export default function LedgerGrid({ entries }: { entries: LedgerEntry[] }) {
         <table className="w-full text-left text-sm">
           <caption className="sr-only">Public donation and vendor payout records</caption>
           <thead className="border-b border-slate-200 bg-[#F0F7FD] text-xs font-bold uppercase tracking-wider text-[#003087]">
-            <tr>{["Date", "Type", "From / to", "Amount (USD)", "Status", "Proof"].map((heading) => <th key={heading} scope="col" className="whitespace-nowrap px-4 py-3">{heading}</th>)}</tr>
+            <tr>{["Date", "Type", "From / to", "Amount (USD)", "Status", "Outcome / delivery", "Proof"].map((heading) => <th key={heading} scope="col" className="whitespace-nowrap px-4 py-3">{heading}</th>)}</tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {filtered.map((entry, index) => (
@@ -104,6 +126,7 @@ export default function LedgerGrid({ entries }: { entries: LedgerEntry[] }) {
                   <span className="font-semibold text-slate-700">{entry.status}</span>
                   {entry.source === "simulated" && <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black text-amber-900">SIMULATED</span>}
                 </td>
+                <td className="max-w-xs px-4 py-3 text-xs text-slate-600">{entry.detail ?? "—"}</td>
                 <td className="px-4 py-3">
                   {api.assetUrl(entry.proof_url) ? (
                     <a href={api.assetUrl(entry.proof_url)!} target="_blank" rel="noreferrer" className="font-bold text-[#0070BA] underline hover:text-[#003087]" aria-label={`View proof for ${entry.actor_name} (opens in new tab)`}>
@@ -133,5 +156,33 @@ export default function LedgerGrid({ entries }: { entries: LedgerEntry[] }) {
         />
       </div>
     )}
+    <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-[#001c48]" aria-labelledby="ledger-ask-title">
+      <h2 id="ledger-ask-title" className="text-lg font-bold text-[#001435] dark:text-white">Ask the ledger</h2>
+      <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">Ask about recorded donations and confirmed vendor payouts in this campaign.</p>
+      <form onSubmit={handleAsk} className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
+        <label className="flex-1 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-300">
+          Your question
+          <input
+            type="text"
+            value={question}
+            onChange={(event) => setQuestion(event.target.value)}
+            maxLength={500}
+            placeholder="Which vendor got paid the most?"
+            disabled={asking || USE_MOCKS}
+            className="mt-1.5 block w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm font-medium text-[#001435] focus:border-[#0070BA] focus:outline-none focus:ring-2 focus:ring-[#0070BA]/20 disabled:opacity-60"
+          />
+        </label>
+        <button type="submit" disabled={!question.trim() || asking || USE_MOCKS} className="rounded-full bg-[#003087] px-5 py-2.5 text-sm font-bold text-white hover:bg-[#00457C] disabled:cursor-not-allowed disabled:opacity-50">
+          {asking ? "Finding answer…" : "Ask"}
+        </button>
+      </form>
+      {USE_MOCKS && <p className="mt-3 text-xs text-slate-500">Questions are available with the live API and Gemini.</p>}
+      <div aria-live="polite" aria-atomic="true" className="mt-4 text-sm">
+        {asking && <p className="text-slate-500">Reading the ledger…</p>}
+        {answer && <p className="rounded-xl bg-[#F0F7FD] p-4 leading-relaxed text-[#001435] dark:bg-[#002b62] dark:text-white">{answer}</p>}
+        {askError && <p role="alert" className="rounded-xl bg-red-50 p-4 text-red-800">{askError}</p>}
+      </div>
+      <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">AI answers summarize the public ledger. Check the transactions above for the source records.</p>
+    </section>
   </div>;
 }

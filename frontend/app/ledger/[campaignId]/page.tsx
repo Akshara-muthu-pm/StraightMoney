@@ -40,12 +40,10 @@ export default function LedgerPage() {
             {campaign?.title ?? "Campaign"} &middot; Captured PayPal donations in &amp; confirmed vendor disbursements out
           </p>
         </div>
-        <Link
-          href={campaign ? `/campaigns/${campaign.id}` : "/explore"}
-          className="inline-flex items-center gap-1 text-xs font-bold text-[#003087] hover:text-[#0070BA] underline"
-        >
-          &larr; Back to campaign story
-        </Link>
+        <div className="flex flex-wrap items-center gap-4">
+          {campaign && !USE_MOCKS && <a href={api.campaignReportUrl(campaign.id)} className="button-secondary text-xs font-bold">Download report (.csv)</a>}
+          <Link href={campaign ? `/campaigns/${campaign.id}` : "/explore"} className="inline-flex items-center gap-1 text-xs font-bold text-[#003087] hover:text-[#0070BA] underline">&larr; Back to campaign story</Link>
+        </div>
       </div>
       {!Number.isInteger(id) || id < 1 ? <p role="alert" className="liquid-glass border-red-200 p-4 text-xs font-bold text-red-900">Invalid campaign ID.</p> : null}
       {loading && <p role="status" className="liquid-glass p-6 text-xs text-slate-500">Loading ledger…</p>}
@@ -63,12 +61,12 @@ export default function LedgerPage() {
                   <p className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500">{label}</p>
                   <span className="h-2 w-2 rounded-full" style={{ backgroundColor: accent }} />
                 </div>
-                <p className="mt-3 text-3xl font-black text-[#001435]">{value}</p>
+                <p className="mt-3 text-3xl font-black text-[#001435] tabular-nums">{value}</p>
               </div>
             ))}
           </div>
           <div className="liquid-glass p-5">
-            <LedgerGrid entries={entries} />
+            <LedgerGrid key={campaign.id} campaignId={campaign.id} entries={entries} />
           </div>
           {USE_MOCKS && <p className="mt-4 text-xs text-slate-400">Demo data for the UI preview.</p>}
         </>

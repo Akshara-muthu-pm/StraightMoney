@@ -1,0 +1,8 @@
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS cancellation_reason TEXT;
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMP;
+ALTER TABLE donations ADD COLUMN IF NOT EXISTS paypal_capture_id VARCHAR(100);
+ALTER TABLE donations ADD COLUMN IF NOT EXISTS refund_request_id VARCHAR(100);
+ALTER TABLE donations ADD COLUMN IF NOT EXISTS refund_start_amount DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE donations ADD COLUMN IF NOT EXISTS refund_processed BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE donations ADD COLUMN IF NOT EXISTS unavailable_amount DOUBLE PRECISION NOT NULL DEFAULT 0;
+CREATE INDEX IF NOT EXISTS ix_donations_paypal_capture_id ON donations (paypal_capture_id);

@@ -28,6 +28,8 @@ export function signOutDemo() {
 }
 export function followCampaign(id: number) { const state = parseDemoState(snapshot()); if (state) save(toggleFollow(state, id)); }
 export function recordReceipt(donation: Donation, title: string, mode: Receipt["mode"]) {
-  const state = parseDemoState(snapshot());
-  if (state) { try { save(addReceipt(state, donation, title, mode)); } catch { /* A captured payment must not be reported as failed if browser storage is unavailable. */ } }
+  if (donation.status !== "captured") return;
+  const state = parseDemoState(snapshot()) ?? createDemoState("Donor", donation.donor_name);
+  try { save(addReceipt(state, donation, title, mode)); }
+  catch { /* A captured payment must not be reported as failed if browser storage is unavailable. */ }
 }

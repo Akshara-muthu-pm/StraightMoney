@@ -359,12 +359,15 @@ class PayPalClient:
             "Content-Type": "application/json",
         }
 
-    async def _request(self, method: str, url: str, payload: dict | None = None, request_id: str | None = None) -> dict[str, Any]:
+    async def _request(self, method: str, url: str, payload: dict | None = None, request_id: str | None = None,
+                       prefer_representation: bool = False) -> dict[str, Any]:
         try:
             for attempt in range(2):
                 headers = await self._auth_headers()
                 if request_id:
                     headers["PayPal-Request-Id"] = request_id
+                if prefer_representation:
+                    headers["Prefer"] = "return=representation"
                 async with httpx.AsyncClient(timeout=30.0) as client:
                     if method == "POST":
                         response = await client.post(url, headers=headers, json=payload or {})
@@ -519,3 +522,46 @@ class PayPalClient:
         url = f"{self._base_url}/v1/payments/payouts/{batch_id}"
 
         return await self._request("GET", url)
+
+    async def verify_webhook_signature(self, headers: dict[str, str], event: dict) -> bool:
+        """Ask PayPal to verify a notification before it touches local accounting."""
+        from config import settings
+
+        if not self.is_configured or not settings.paypal_webhook_id:
+            raise PayPalError(503, {"error": "paypal_webhook_not_configured"})
+        required = ("paypal-auth-algo", "paypal-cert-url", "paypal-transmission-id",
+                    "paypal-transmission-sig", "paypal-transmission-time")
+        if any(not headers.get(key) for key in required):
+            return False
+        payload = {
+            "auth_algo": headers["paypal-auth-algo"],
+            "cert_url": headers["paypal-cert-url"],
+            "transmission_id": headers["paypal-transmission-id"],
+            "transmission_sig": headers["paypal-transmission-sig"],
+            "transmission_time": headers["paypal-transmission-time"],
+            "webhook_id": settings.paypal_webhook_id,
+            "webhook_event": event,
+        }
+        result = await self._request("POST", f"{self._base_url}/v1/notifications/verify-webhook-signature", payload)
+        return result.get("verification_status") == "SUCCESS"
+
+    async def get_capture(self, capture_id: str) -> dict[str, Any]:
+        if not self.is_configured:
+            raise PayPalError(503, {"error": "paypal_not_configured"})
+        return await self._request("GET", f"{self._base_url}/v2/payments/captures/{capture_id}")
+
+    async def refund_capture(self, capture_id: str, request_id: str) -> dict[str, Any]:
+        if not self.is_configured:
+            raise PayPalError(503, {"error": "paypal_not_configured"})
+        return await self._request("POST", f"{self._base_url}/v2/payments/captures/{capture_id}/refund", {}, request_id,
+                                   prefer_representation=True)
+
+    async def get_refund(self, refund_id: str) -> dict[str, Any]:
+        if not self.is_configured:
+            raise PayPalError(503, {"error": "paypal_not_configured"})
+        return await self._request("GET", f"{self._base_url}/v2/payments/refunds/{refund_id}")
+
+    async def get_dispute(self, dispute_id: str) -> dict[str, Any]:
+        if not self.is_configured:
+            raise PayPalError(503, {"error": "paypal_not_configured"})
+        return await self._request("GET", f"{self._base_url}/v1/customer/disputes/{dispute_id}")

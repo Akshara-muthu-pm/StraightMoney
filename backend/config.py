@@ -21,10 +21,12 @@ class Settings(BaseSettings):
     paypal_client_secret: str = ""
     paypal_base_url: str = "https://api-m.sandbox.paypal.com"
     paypal_simulate_payouts: bool = False
-    enable_verifier_test_override: bool = True  # temporary; sandbox only
+    enable_verifier_test_override: bool = False  # opt-in; sandbox only
     allow_simulated_donations: bool = False
     max_donation_amount: float = Field(default=5000, gt=0, allow_inf_nan=False)
     verifier_key: str = ""
+    admin_setup_key: str = ""
+    paypal_webhook_id: str = ""
 
     # LLM (Gemini)
     llm_api_key: str = ""

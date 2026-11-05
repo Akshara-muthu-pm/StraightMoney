@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { api, USE_MOCKS } from "@/lib/api";
+import { mockStartupCampaign } from "@/lib/mockData";
 import type { Campaign } from "@/lib/types";
 import { money, totalFunded } from "@/lib/presentation";
 import ProgressBar from "./ProgressBar";
@@ -28,7 +29,9 @@ export default function CampaignExplore({
 
   // Search & Filter state
   const [searchQuery, setSearchQuery] = useState("");
-  const [activeCategory, setActiveCategory] = useState<"all" | "causes" | "education" | "startups">(initialCategory);
+  const [categoryChoice, setCategoryChoice] = useState({ source: initialCategory, value: initialCategory });
+  const activeCategory = categoryChoice.source === initialCategory ? categoryChoice.value : initialCategory;
+  const setActiveCategory = (value: typeof initialCategory) => setCategoryChoice({ source: initialCategory, value });
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "funded">("all");
   const [sortBy, setSortBy] = useState<"featured" | "progress" | "goal-desc" | "goal-asc">("featured");
 
@@ -77,11 +80,6 @@ export default function CampaignExplore({
     };
   }, [retry]);
 
-  // Handle category prop change if parent route changes
-  useEffect(() => {
-    setActiveCategory(initialCategory);
-  }, [initialCategory]);
-
   // Aggregate metrics
   const metrics = useMemo(() => {
     const totalGoal = campaigns.reduce((acc, c) => acc + c.goal_amount, 0);
@@ -102,7 +100,12 @@ export default function CampaignExplore({
           if (!isEdu) return false;
         } else if (activeCategory === "causes") {
           // All active causes
-          if (campaign.title.toLowerCase().includes("startup")) return false;
+          if (campaign.title.toLowerCase().includes("startup") || campaign.title.toLowerCase().includes("aerodrone")) return false;
+        } else if (activeCategory === "startups") {
+          const isStartup = /startup|drone|aerodrone|robotics|hardware|venture|tech/i.test(
+            `${campaign.title} ${campaign.description}`
+          );
+          if (!isStartup) return false;
         }
 
         // Status filtering
@@ -145,7 +148,17 @@ export default function CampaignExplore({
       });
   }, [campaigns, activeCategory, statusFilter, searchQuery, sortBy]);
 
-  const featuredCampaign = campaigns[0];
+  const startupCampaign = useMemo(() => {
+    return (
+      campaigns.find((c) =>
+        /startup|drone|aerodrone|robotics|hardware|venture|tech/i.test(
+          `${c.title} ${c.description}`
+        )
+      ) || mockStartupCampaign
+    );
+  }, [campaigns]);
+
+  const featuredCampaign = activeCategory === "startups" ? startupCampaign : campaigns[0];
 
   const handleFollow = (campaignId: number, e: React.MouseEvent) => {
     e.preventDefault();
@@ -198,7 +211,7 @@ export default function CampaignExplore({
                 <span className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                   Total Goal
                 </span>
-                <span className="mt-1 block text-lg font-black text-[#001435] dark:text-white">
+                <span className="mt-1 block text-lg font-black text-[#001435] dark:text-white tabular-nums">
                   {money(metrics.totalGoal || 1200)}
                 </span>
                 <span className="mt-0.5 block text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold">
@@ -210,7 +223,7 @@ export default function CampaignExplore({
                 <span className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                   Total Funded
                 </span>
-                <span className="mt-1 block text-lg font-black text-[#0070BA] dark:text-[#38bdf8]">
+                <span className="mt-1 block text-lg font-black text-[#0070BA] dark:text-[#38bdf8] tabular-nums">
                   {money(metrics.totalRaised || 1200)}
                 </span>
                 <span className="mt-0.5 block text-[10px] text-slate-500 dark:text-slate-400 font-medium">
@@ -254,8 +267,8 @@ export default function CampaignExplore({
             {[
               { id: "all", label: "All Causes", count: campaigns.length },
               { id: "education", label: "Education & Schools", count: campaigns.filter((c) => /library|school|book|education/i.test(`${c.title} ${c.description}`)).length },
-              { id: "causes", label: "Community & Civic", count: campaigns.length },
-              { id: "startups", label: "Startups & Emerging", count: null },
+              { id: "causes", label: "Community & Civic", count: campaigns.filter((c) => !/startup|drone|aerodrone/i.test(`${c.title} ${c.description}`)).length },
+              { id: "startups", label: "Startups & Emerging", count: Math.max(1, campaigns.filter((c) => /startup|drone|aerodrone|robotics/i.test(`${c.title} ${c.description}`)).length) },
             ].map((tab) => {
               const isActive = activeCategory === tab.id;
               return (
@@ -285,7 +298,7 @@ export default function CampaignExplore({
                   )}
                   {tab.id === "startups" && (
                     <span className="rounded-full bg-[#FFC439] px-1.5 py-0.2 text-[9px] font-black uppercase text-[#001435]">
-                      Beta
+                      Live Pilot
                     </span>
                   )}
                 </button>
@@ -391,8 +404,8 @@ export default function CampaignExplore({
             <div className="grid gap-8 lg:grid-cols-2 lg:items-center">
               <div>
                 <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3.5 py-1 text-xs font-black tracking-wider text-[#BAE0FC] backdrop-blur-md">
-                  <span className="h-2 w-2 rounded-full bg-[#FFC439]" />
-                  STARTUP MILESTONE ESCROW &middot; COMING SOON
+                  <span className="h-2 w-2 rounded-full bg-[#FFC439] animate-pulse" />
+                  STARTUP MILESTONE ESCROW &middot; LIVE PILOT
                 </div>
                 <h2 id="startups-banner-title" className="mt-5 text-3xl font-extrabold tracking-tight sm:text-4xl lg:text-5xl">
                   Fund emerging ventures without blind trust.
@@ -401,35 +414,58 @@ export default function CampaignExplore({
                   StraightMoney for Startups brings invoice-governed capital to early-stage builders. Backers fund milestone pools, and funds are paid directly to prototyping labs, cloud providers, and manufacturers only when verified deliverables pass human and policy checks.
                 </p>
 
-                {/* Waitlist Form */}
-                <div className="mt-8 max-w-md">
-                  {waitlistSubscribed ? (
-                    <div className="rounded-2xl border border-emerald-400/40 bg-emerald-950/60 p-4 text-emerald-200 backdrop-blur-md">
-                      <p className="text-xs font-black uppercase tracking-wider text-emerald-400">
-                        You&apos;re on the early-access list!
-                      </p>
-                      <p className="mt-1 text-xs text-emerald-200/90">
-                        We&apos;ll notify you when the first startup milestone escrow campaign opens on StraightMoney.
-                      </p>
-                    </div>
-                  ) : (
-                    <form onSubmit={handleWaitlistSubmit} className="flex flex-col gap-2.5 sm:flex-row">
-                      <input
-                        type="email"
-                        required
-                        value={waitlistEmail}
-                        onChange={(e) => setWaitlistEmail(e.target.value)}
-                        placeholder="Enter your email for early access..."
-                        className="flex-1 rounded-full border border-white/30 bg-white/15 px-4 py-3 text-xs text-white placeholder:text-blue-200 focus:border-[#FFC439] focus:bg-white/20 focus:outline-none"
-                      />
-                      <button
-                        type="submit"
-                        className="button-gold rounded-full px-5 py-3 text-xs font-black whitespace-nowrap shadow-md shadow-[#FFC439]/30"
-                      >
-                        Notify Me &rarr;
-                      </button>
-                    </form>
-                  )}
+                {/* Direct Startup Donate & Actions */}
+                <div className="mt-8 space-y-4">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Link
+                      href={`/campaigns/${startupCampaign?.id || 2}#donate`}
+                      className="button-gold rounded-full px-6 py-3.5 text-xs font-black shadow-lg shadow-[#FFC439]/30 transition hover:scale-105 inline-flex items-center gap-2"
+                    >
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+                      </svg>
+                      <span>Donate via PayPal &rarr; Back Startup Milestone</span>
+                    </Link>
+                    <Link
+                      href={`/campaigns/${startupCampaign?.id || 2}`}
+                      className="rounded-full border border-white/30 bg-white/10 px-5 py-3.5 text-xs font-bold text-white backdrop-blur-md transition hover:bg-white/20"
+                    >
+                      View Milestones &amp; Budget
+                    </Link>
+                    <Link
+                      href="/explore/startups"
+                      className="rounded-full px-4 py-3.5 text-xs font-bold text-[#BAE0FC] underline hover:text-white"
+                    >
+                      Case Studies &rarr;
+                    </Link>
+                  </div>
+
+                  {/* Early-access updates */}
+                  <div className="max-w-md pt-2">
+                    {waitlistSubscribed ? (
+                      <div className="rounded-2xl border border-emerald-400/40 bg-emerald-950/60 p-3.5 text-emerald-200 backdrop-blur-md text-xs">
+                        <p className="font-bold text-emerald-400">✓ Added to backer update notifications!</p>
+                        <p className="mt-0.5 text-[11px] text-emerald-200/90">We&apos;ll notify you when new startup milestone campaigns launch.</p>
+                      </div>
+                    ) : (
+                      <form onSubmit={handleWaitlistSubmit} className="flex flex-col gap-2 sm:flex-row">
+                        <input
+                          type="email"
+                          required
+                          value={waitlistEmail}
+                          onChange={(e) => setWaitlistEmail(e.target.value)}
+                          placeholder="Backer updates email..."
+                          className="flex-1 rounded-full border border-white/25 bg-white/10 px-3.5 py-2 text-xs text-white placeholder:text-blue-200/70 focus:border-[#FFC439] focus:bg-white/20 focus:outline-none"
+                        />
+                        <button
+                          type="submit"
+                          className="rounded-full border border-white/30 bg-white/15 px-4 py-2 text-[11px] font-bold text-white transition hover:bg-white/25"
+                        >
+                          Get Updates
+                        </button>
+                      </form>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -479,12 +515,12 @@ export default function CampaignExplore({
       {/* Main Campaign Discovery Content */}
       {!loading && !error && (
         <>
-          {/* Featured Spotlight Campaign (Only show when not filtering by non-matching query) */}
-          {featuredCampaign && !searchQuery && activeCategory !== "startups" && (
+          {/* Featured Spotlight Campaign */}
+          {featuredCampaign && !searchQuery && (
             <section aria-labelledby="featured-campaign-title" className="space-y-4">
               <div className="flex items-center justify-between">
                 <p className="text-xs font-extrabold uppercase tracking-widest text-[#003087] dark:text-[#38bdf8]">
-                  Flagship Spotlight Campaign
+                  {activeCategory === "startups" ? "Flagship Startup Milestone" : "Flagship Spotlight Campaign"}
                 </p>
                 <span className="rounded-full border border-brand-200 bg-white/80 px-3 py-1 text-[11px] font-bold text-brand-900 dark:border-slate-800 dark:bg-slate-800 dark:text-slate-300">
                   {USE_MOCKS ? "Sample Prototype" : "Live Sandbox"}

@@ -17,12 +17,19 @@ export const metadata: Metadata = {
   title: "StraightMoney · Transparent Community Fundraising (PayPal AI Hackathon)",
   description:
     "Community fundraising where the organizer never holds the money. Secured by PayPal Orders v2, PayPal Payouts, and Gemini AI verification.",
+  icons: {
+    icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23001435'/><path d='M7 5h10.5c3.6 0 6.2 2.2 5.6 5.8-.8 4.8-4.2 6.4-7.8 6.4h-3.6L9.5 29H5.2L7 5z' fill='%23003087'/><path d='M11.5 8.5H22c3.6 0 6.2 2.2 5.6 5.8-.8 4.8-4.2 6.4-7.8 6.4h-3.6L14 32.5H9.7l2.8-24z' fill='%23009CDE'/></svg>",
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" data-theme="light" suppressHydrationWarning className={jakarta.variable}>
       <head>
+        <link
+          rel="icon"
+          href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23001435'/><path d='M7 5h10.5c3.6 0 6.2 2.2 5.6 5.8-.8 4.8-4.2 6.4-7.8 6.4h-3.6L9.5 29H5.2L7 5z' fill='%23003087'/><path d='M11.5 8.5H22c3.6 0 6.2 2.2 5.6 5.8-.8 4.8-4.2 6.4-7.8 6.4h-3.6L14 32.5H9.7l2.8-24z' fill='%23009CDE'/></svg>"
+        />
         <script
           dangerouslySetInnerHTML={{
             __html: `(function(){try{var m=localStorage.getItem("straightmoney-theme");var p=window.matchMedia("(prefers-color-scheme: dark)").matches;var t=m==="dark"||(m!=="light"&&p)?"dark":"light";document.documentElement.setAttribute("data-theme",t);if(t==="dark"){document.documentElement.classList.add("dark");}else{document.documentElement.classList.remove("dark");}}catch(e){}})();`,

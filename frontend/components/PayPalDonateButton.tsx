@@ -47,7 +47,6 @@ export default function PayPalDonateButton({
   const numAmount = Number(amount);
   const valid = Boolean(name.trim()) && Number.isFinite(numAmount) && numAmount >= 0.01 && numAmount <= maxDonationAmount && Math.abs(numAmount * 100 - Math.round(numAmount * 100)) < 0.000001;
   const awaitingPayment = outcome?.kind === "pending" || outcome?.kind === "uncertain";
-  const allowSimulation = process.env.NEXT_PUBLIC_ALLOW_SIMULATED_DONATIONS === "true";
 
   const completeOrder = async (orderId: string) => {
     setCapturing(true);
@@ -74,20 +73,6 @@ export default function PayPalDonateButton({
       setError(cause instanceof Error ? cause.message : "Confirmation failed. Check status below.");
       setOutcome({ kind: "uncertain", orderId, detail: "We could not confirm the payment. Check status below." });
     } finally {
-      setCapturing(false);
-    }
-  };
-
-  const handleSimulatedDonation = async () => {
-    if (!valid || capturing || awaitingPayment) return;
-    setCapturing(true);
-    setError("");
-    setOutcome(null);
-    try {
-      const donation = await api.createDonation(campaignId, name.trim(), Number(amount), true);
-      await completeOrder(donation.paypal_order_id);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not complete donation.");
       setCapturing(false);
     }
   };
@@ -322,19 +307,6 @@ export default function PayPalDonateButton({
             <code className="rounded-md border border-slate-200 bg-slate-100/80 px-1.5 py-0.5 font-mono text-[#001435] dark:border-white/10 dark:bg-slate-800 dark:text-amber-300">95131</code>).
           </p>
         </details>
-
-        {allowSimulation && (
-          <div className="text-center pt-0.5">
-            <button
-              type="button"
-              disabled={!valid || capturing || awaitingPayment}
-              onClick={handleSimulatedDonation}
-              className="text-xs font-semibold text-slate-500 hover:text-[#003087] underline disabled:opacity-50 dark:text-slate-400 dark:hover:text-sky-300"
-            >
-              Simulate donation without PayPal deduction (UI demo mode)
-            </button>
-          </div>
-        )}
       </div>
 
       {capturing && (
