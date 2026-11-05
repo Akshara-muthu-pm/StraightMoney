@@ -12,6 +12,7 @@ import pytest
 import httpx
 
 from payments import (
+    PayPalClient,
     PayPalError,
     SANDBOX_BASE_URL,
     capture_order,
@@ -21,6 +22,25 @@ from payments import (
     get_payout_status,
     load_env_credentials,
 )
+
+
+@pytest.mark.asyncio
+async def test_redirect_order_sets_paypal_return_and_cancel_urls(monkeypatch):
+    client = PayPalClient()
+    client._client_id = "test-client"
+    client._client_secret = "test-secret"
+    monkeypatch.setenv("FRONTEND_URL", "http://localhost:3000")
+
+    async def request(method, url, payload=None, request_id=None):
+        assert method == "POST"
+        assert url == f"{SANDBOX_BASE_URL}/v2/checkout/orders"
+        context = payload["payment_source"]["paypal"]["experience_context"]
+        assert context["return_url"] == "http://localhost:3000/donate/paypal-return?campaign_id=7"
+        assert context["cancel_url"] == "http://localhost:3000/donate/paypal-return?campaign_id=7&cancelled=1"
+        return {"id": "ORDER-1"}
+
+    monkeypatch.setattr(client, "_request", request)
+    await client.create_order(campaign_id=7, amount=25, currency="USD", donor_name="Donor")
 
 
 def test_sandbox_safety_enforcement(monkeypatch: pytest.MonkeyPatch) -> None:

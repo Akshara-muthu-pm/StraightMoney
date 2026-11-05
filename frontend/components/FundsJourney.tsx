@@ -34,7 +34,7 @@ export default function FundsJourney() {
               An immutable ledger you can inspect.
             </p>
           </div>
-          <Link href="#campaigns" className="button-secondary mt-8 shadow-sm text-xs">
+          <Link href="/explore" className="button-secondary mt-8 shadow-sm text-xs">
             Follow a campaign’s journey &rarr;
           </Link>
         </div>

@@ -29,7 +29,7 @@ function DonorContent() {
         <p className="text-xs font-medium text-slate-500">
           Follows and donation confirmations stay active in this session until you sign out.
         </p>
-        <Link href="/#campaigns" className="button-primary text-xs">
+        <Link href="/explore" className="button-primary text-xs">
           Explore campaigns
         </Link>
       </div>
@@ -79,7 +79,7 @@ function DonorContent() {
             <p className="mt-2 text-xs leading-relaxed text-slate-600">
               Read a campaign story and select &ldquo;Follow this project&rdquo; to keep it here. Confirmed donations made in this session appear in your history below.
             </p>
-            <Link href="/#campaigns" className="button-primary mt-4 text-xs">
+            <Link href="/explore" className="button-primary mt-4 text-xs">
               Find a campaign
             </Link>
           </div>

@@ -60,7 +60,7 @@ export default function Header() {
           </span>
         </Link>
         <nav aria-label="Main navigation" className="flex flex-wrap items-center gap-2 text-sm font-semibold sm:gap-3.5">
-          <Link href="/#campaigns" className="rounded-full px-3.5 py-1.5 text-xs font-bold text-slate-700 transition hover:bg-white/80 hover:text-[#003087] hover:shadow-sm">
+          <Link href="/explore" className="rounded-full px-3.5 py-1.5 text-xs font-bold text-slate-700 transition hover:bg-white/80 hover:text-[#003087] hover:shadow-sm">
             Explore campaigns
           </Link>
           <Link href="/#how-it-works" className="rounded-full px-3.5 py-1.5 text-xs font-bold text-slate-700 transition hover:bg-white/80 hover:text-[#003087] hover:shadow-sm">
@@ -129,7 +129,7 @@ export default function Header() {
             href={/^\/campaigns\/\d+$/.test(pathname) ? `${pathname}#donate` : "/donate"}
             className="button-gold text-xs font-black shadow-md shadow-[#FFC439]/25 hover:shadow-[#FFC439]/40"
           >
-            Donate
+            {/^\/campaigns\/\d+$/.test(pathname) ? "Donate" : "Choose a cause"}
           </Link>
         </nav>
       </div>

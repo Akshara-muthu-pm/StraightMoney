@@ -21,8 +21,12 @@ function errorMessage(payload: unknown, fallback: string): string {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(`${API_URL}${path}`, { ...init, signal: init?.signal ?? AbortSignal.timeout(180000) });
+    const isRead = !init?.method || init.method === "GET";
+    response = await fetch(`${API_URL}${path}`, { ...init, signal: init?.signal ?? AbortSignal.timeout(isRead ? 12000 : 180000) });
   } catch (cause) {
+    if (path === "/campaigns" || /^\/campaigns\/\d+$/.test(path)) {
+      throw new Error("Live campaigns are unavailable. Donation checkout is paused until the campaign service is running. Please try again shortly.");
+    }
     if (path.includes("/donations") || path.endsWith("/donate")) {
       throw new Error(`Could not reach the donation API at ${API_URL}. Make sure the backend is running. If you already approved a PayPal payment, check the public ledger before trying again.`);
     }
@@ -33,6 +37,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   const body: unknown = await response.json().catch(() => null);
   if (!response.ok) {
+    if (response.status >= 500 && (path === "/campaigns" || /^\/campaigns\/\d+$/.test(path))) {
+      throw new Error("Live campaigns are unavailable. Donation checkout is paused until the campaign service is running. Please try again shortly.");
+    }
     throw new Error(errorMessage(body, `API request failed: ${response.status} ${response.statusText}`));
   }
   return body as T;

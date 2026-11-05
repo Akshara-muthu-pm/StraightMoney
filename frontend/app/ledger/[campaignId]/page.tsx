@@ -41,7 +41,7 @@ export default function LedgerPage() {
           </p>
         </div>
         <Link
-          href={campaign ? `/campaigns/${campaign.id}` : "/#campaigns"}
+          href={campaign ? `/campaigns/${campaign.id}` : "/explore"}
           className="inline-flex items-center gap-1 text-xs font-bold text-[#003087] hover:text-[#0070BA] underline"
         >
           &larr; Back to campaign story

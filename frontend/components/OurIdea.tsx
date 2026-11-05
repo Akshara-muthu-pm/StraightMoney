@@ -26,7 +26,7 @@ export default function OurIdea() {
           <p className="mt-4 max-w-lg text-sm leading-relaxed text-slate-500">
             StraightMoney connects published budgets, invoice reviews, automated Gemini checks, and immutable public ledger records in one place. Organizers never take custody of cash.
           </p>
-          <Link href="#campaigns" className="button-primary mt-8 shadow-md shadow-blue-900/15">
+          <Link href="/explore" className="button-primary mt-8 shadow-md shadow-blue-900/15">
             Find a project to follow &rarr;
           </Link>
         </div>
