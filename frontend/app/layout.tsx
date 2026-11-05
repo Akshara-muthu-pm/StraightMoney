@@ -70,7 +70,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <div>
                 <h4 className="text-xs font-black uppercase tracking-widest text-[#001435]">Fundraising Flow</h4>
                 <ul className="mt-3.5 space-y-2 text-xs font-semibold">
-                  <li><Link href="/#campaigns" className="text-slate-600 transition hover:text-[#0070BA]">Explore Campaigns</Link></li>
+                  <li><Link href="/explore" className="text-slate-600 transition hover:text-[#0070BA]">Explore Campaigns</Link></li>
                   <li><Link href="/#how-it-works" className="text-slate-600 transition hover:text-[#0070BA]">How Funds Move</Link></li>
                   <li><Link href="/ledger/1" className="text-slate-600 transition hover:text-[#0070BA]">School Library Public Ledger</Link></li>
                   <li><Link href="/donate" className="text-slate-600 transition hover:text-[#0070BA]">Support a Project</Link></li>

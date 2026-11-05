@@ -23,13 +23,24 @@ export default function DonatePage() {
   }, []);
 
   useEffect(() => {
+    if (selectedId === null) return;
+    const frame = requestAnimationFrame(() => {
+      document.getElementById("donation-form-title")?.scrollIntoView({
+        block: "start",
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth",
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [selectedId]);
+
+  useEffect(() => {
     let active = true;
     api
       .listCampaigns()
       .then((items) => Promise.all(items.filter((item) => item.status === "active").map((item) => api.getCampaign(item.id))))
       .then((items) => { if (active) setCampaigns(items); })
-      .catch(() => {
-        if (active) setError("We couldn’t load campaigns right now. Please try again.");
+      .catch((cause: unknown) => {
+        if (active) setError(cause instanceof Error ? cause.message : "Live campaigns are unavailable. Please try again shortly.");
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -39,7 +50,7 @@ export default function DonatePage() {
     };
   }, [retry]);
 
-  const campaign = campaigns.find((item) => item.id === selectedId) ?? campaigns[0];
+  const campaign = campaigns.find((item) => item.id === selectedId) ?? null;
 
   const refresh = async () => {
     if (!campaign) return;
@@ -54,7 +65,7 @@ export default function DonatePage() {
       {/* Top Breadcrumb & Trust Banner */}
       <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-6 dark:border-white/10">
         <Link
-          href="/#campaigns"
+          href="/explore/public-causes"
           className="inline-flex items-center gap-2 rounded-full border-2 border-slate-200/90 bg-white px-4 py-1.5 text-xs font-bold text-slate-700 shadow-2xs backdrop-blur-md transition hover:border-[#0070BA] hover:text-[#003087] hover:shadow-xs dark:border-white/15 dark:bg-slate-900/70 dark:text-slate-300 dark:hover:bg-slate-800"
         >
           &larr; Browse all campaigns
@@ -66,6 +77,7 @@ export default function DonatePage() {
       </div>
 
       {/* Hero Header & Graphic Artwork */}
+      {campaign && (
       <div className="relative mt-8 grid gap-8 lg:grid-cols-[1.2fr_0.8fr] lg:items-center">
         <div>
           <div className="inline-flex items-center gap-2">
@@ -150,6 +162,7 @@ export default function DonatePage() {
           </p>
         </div>
       </div>
+      )}
 
       {loading && (
         <div role="status" className="liquid-glass mt-8 p-8 text-center text-sm font-semibold text-slate-600 dark:text-slate-300">
@@ -177,10 +190,37 @@ export default function DonatePage() {
 
       {!loading && !error && !campaign && (
         <div className="liquid-glass mt-8 p-8 text-center dark:text-slate-300">
-          <p className="text-slate-600 dark:text-slate-300">No campaigns are currently accepting contributions.</p>
-          <Link href="/#campaigns" className="button-primary mt-4 text-xs">
-            Explore campaigns
-          </Link>
+          {campaigns.length === 0 ? (
+            <>
+              <p className="text-slate-600 dark:text-slate-300">No campaigns are currently accepting contributions.</p>
+              <Link href="/explore" className="button-primary mt-4 text-xs">Explore campaigns</Link>
+            </>
+          ) : (
+            <section aria-labelledby="choose-campaign-title" className="text-left">
+              <h2 id="choose-campaign-title" className="text-2xl font-extrabold text-[#001435] dark:text-white">Choose a campaign to support</h2>
+              <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Your donation will go to the campaign you select. Review its story and budget before continuing to PayPal.</p>
+              <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {campaigns.map((item) => {
+                  const image = campaignImagery(item.title, "card");
+                  return (
+                    <article key={item.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-900">
+                      <div className="relative h-36 bg-slate-100">
+                        <Image src={image.src} alt={image.alt} fill sizes="(max-width: 640px) 100vw, 33vw" className="object-cover" />
+                      </div>
+                      <div className="p-4">
+                        <h3 className="text-base font-extrabold text-[#001435] dark:text-white">{item.title}</h3>
+                        <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">Goal: {money(item.goal_amount, item.currency)}</p>
+                        <div className="mt-4 flex flex-wrap gap-3">
+                          <button type="button" onClick={() => setSelectedId(item.id)} className="button-primary text-xs">Select campaign</button>
+                          <Link href={`/campaigns/${item.id}#campaign-story`} className="self-center text-xs font-bold text-[#003087] underline dark:text-sky-300">Read story</Link>
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
+          )}
         </div>
       )}
 

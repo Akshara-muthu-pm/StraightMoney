@@ -169,6 +169,12 @@ class DonationOut(BaseModel):
     created_at: UTCDateTime
 
 
+class DonationCreateOut(DonationOut):
+    """New order with the Sandbox URL where the donor approves payment."""
+
+    approval_url: Optional[str] = None
+
+
 class DonationCaptureOut(DonationOut):
     """Extends DonationOut with PayPal capture details."""
 

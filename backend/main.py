@@ -19,6 +19,7 @@ import tempfile
 import uuid
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 from fastapi import (
     APIRouter,
@@ -63,6 +64,7 @@ from schemas import (
     CampaignOut,
     DonationCaptureOut,
     DonationCreate,
+    DonationCreateOut,
     DonationOut,
     ExtractionResult,
     InvoiceDetail,
@@ -339,8 +341,8 @@ def list_campaigns(db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 
 
-@router.post("/campaigns/{campaign_id}/donate", response_model=DonationOut, status_code=201)
-@router.post("/campaigns/{campaign_id}/donations", response_model=DonationOut, status_code=201)
+@router.post("/campaigns/{campaign_id}/donate", response_model=DonationCreateOut, status_code=201)
+@router.post("/campaigns/{campaign_id}/donations", response_model=DonationCreateOut, status_code=201)
 async def create_donation(
     campaign_id: int,
     payload: DonationCreate,
@@ -349,9 +351,8 @@ async def create_donation(
     """
     Initiate a PayPal order for a campaign donation.
 
-    The frontend should redirect the donor to the PayPal approval URL returned
-    in the ``paypal_order`` field of the response, then call the capture
-    endpoint once the donor approves.
+    The frontend redirects the donor to ``approval_url``, then calls the
+    capture endpoint after PayPal returns the approved order ID.
     """
     campaign = _get_or_404(db, Campaign, campaign_id)
     if campaign.status != "active":
@@ -363,6 +364,7 @@ async def create_donation(
     if payload.simulate:
         order_id = f"SANDBOX-SIM-ORDER-{uuid.uuid4().hex[:10].upper()}"
         is_simulated = True
+        approval_url = None
     else:
         if not paypal.is_configured:
             raise HTTPException(status_code=503, detail="PayPal Sandbox checkout is not configured.")
@@ -374,6 +376,12 @@ async def create_donation(
                 donor_name=payload.donor_name,
             )
             order_id = order["id"]
+            approval_url = next((link.get("href") for link in order.get("links", [])
+                                 if link.get("rel") in {"approve", "payer-action"}), None)
+            parsed = urlparse(approval_url or "")
+            if (parsed.scheme != "https" or parsed.hostname not in {"www.sandbox.paypal.com", "sandbox.paypal.com"}
+                    or not parsed.path or not parsed.query):
+                raise HTTPException(502, "PayPal did not return a valid Sandbox checkout link. No donation was created.")
             is_simulated = False
         except PayPalError as exc:
             raise HTTPException(status_code=502, detail=f"PayPal error: {exc.body}")
@@ -397,7 +405,7 @@ async def create_donation(
         campaign_id=campaign_id,
         detail={"paypal_order_id": order_id, "amount": payload.amount, "simulated": is_simulated},
     )
-    return DonationOut.model_validate(donation)
+    return DonationCreateOut(**DonationOut.model_validate(donation).model_dump(), approval_url=approval_url)
 
 
 # ---------------------------------------------------------------------------
@@ -493,7 +501,7 @@ async def capture_donation(order_id: str, db: Session = Depends(get_db)):
             raise HTTPException(status_code=503, detail="PayPal Sandbox checkout is not configured.")
         try:
             capture_data = await paypal.get_order(order_id)
-            if donation.status != "pending" and _paypal_capture_status(capture_data) == "UNKNOWN":
+            if capture_data.get("status") == "APPROVED" and _paypal_capture_status(capture_data) == "UNKNOWN":
                 capture_data = await paypal.capture_order(order_id)
         except PayPalError as exc:
             body_str = json.dumps(exc.body) if isinstance(exc.body, (dict, list)) else str(exc.body)
@@ -510,9 +518,8 @@ async def capture_donation(order_id: str, db: Session = Depends(get_db)):
                     raise HTTPException(
                         status_code=400,
                         detail=(
-                            "PayPal order was not approved in the checkout window. Please log in with a PayPal "
-                            "Sandbox Personal/Buyer test account in the popup and click 'Pay Now', or click "
-                            "'Simulate sandbox donation without popup' to complete a test donation instantly."
+                            "PayPal order was not approved. Complete checkout on the PayPal Sandbox page "
+                            "with a Sandbox buyer account, then return to check its status."
                         ),
                     )
             else:

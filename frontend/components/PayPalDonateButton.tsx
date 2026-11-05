@@ -1,13 +1,11 @@
 "use client";
 
-import { useId, useRef, useState } from "react";
+import { useId, useState } from "react";
 import Link from "next/link";
-import { PayPalButtons, PayPalScriptProvider } from "@paypal/react-paypal-js";
 import { api } from "@/lib/api";
 import { recordReceipt, useDemoSession } from "@/lib/demo-session";
 
 const USE_MOCKS = process.env.NEXT_PUBLIC_USE_MOCKS === "true";
-const clientId = process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID || "";
 
 type Outcome =
   | { kind: "captured"; amount: number; source: "paypal" | "simulated"; refreshFailed?: boolean }
@@ -44,11 +42,10 @@ export default function PayPalDonateButton({
   const [outcome, setOutcome] = useState<Outcome | null>(null);
   const [capturing, setCapturing] = useState(false);
   const helpId = useId();
-  const checkoutStartError = useRef<string | null>(null);
   const configuredMaximum = Number(process.env.NEXT_PUBLIC_MAX_DONATION_AMOUNT || 5000);
   const maxDonationAmount = Number.isFinite(configuredMaximum) && configuredMaximum > 0 ? configuredMaximum : 5000;
   const numAmount = Number(amount);
-  const valid = Boolean(name.trim()) && !Number.isNaN(numAmount) && numAmount >= 0.01 && numAmount <= maxDonationAmount;
+  const valid = Boolean(name.trim()) && Number.isFinite(numAmount) && numAmount >= 0.01 && numAmount <= maxDonationAmount && Math.abs(numAmount * 100 - Math.round(numAmount * 100)) < 0.000001;
   const awaitingPayment = outcome?.kind === "pending" || outcome?.kind === "uncertain";
   const allowSimulation = process.env.NEXT_PUBLIC_ALLOW_SIMULATED_DONATIONS === "true";
 
@@ -91,6 +88,25 @@ export default function PayPalDonateButton({
       await completeOrder(donation.paypal_order_id);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not complete donation.");
+      setCapturing(false);
+    }
+  };
+
+  const startPayPalCheckout = async () => {
+    if (!valid || capturing || awaitingPayment) return;
+    setCapturing(true);
+    setError("");
+    setOutcome(null);
+    try {
+      const donation = await api.createDonation(campaignId, name.trim(), numAmount, false);
+      if (!donation.approval_url) throw new Error("PayPal did not provide a checkout page. Please try again.");
+      const approvalUrl = new URL(donation.approval_url);
+      if (approvalUrl.protocol !== "https:" || !["www.sandbox.paypal.com", "sandbox.paypal.com"].includes(approvalUrl.hostname)) {
+        throw new Error("PayPal did not provide a valid Sandbox checkout page. Please try again.");
+      }
+      window.location.assign(approvalUrl.toString());
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not start PayPal checkout.");
       setCapturing(false);
     }
   };
@@ -279,80 +295,14 @@ export default function PayPalDonateButton({
               No PayPal account required &mdash; debit and credit cards processed directly.
             </p>
           </div>
-        ) : clientId && !clientId.startsWith("your-") ? (
-          <div className="space-y-3">
-            <div className="w-full overflow-hidden rounded-2xl bg-transparent">
-              <PayPalScriptProvider
-                options={{
-                  clientId: clientId,
-                  currency: currency,
-                  intent: "capture",
-                  enableFunding: "card",
-                }}
-              >
-                <PayPalButtons
-                  disabled={!valid || capturing || awaitingPayment}
-                  forceReRender={[campaignId, amount, name]}
-                  style={{ layout: "vertical", shape: "pill", color: "gold", height: 48 }}
-                  createOrder={async () => {
-                    if (!valid) throw new Error("Enter your name and a valid donation amount.");
-                    checkoutStartError.current = null;
-                    setError("");
-                    setOutcome(null);
-                    try {
-                      const donation = await api.createDonation(campaignId, name.trim(), Number(amount), false);
-                      return donation.paypal_order_id;
-                    } catch (cause) {
-                      checkoutStartError.current = cause instanceof Error ? cause.message : "Could not start checkout.";
-                      setError(checkoutStartError.current);
-                      throw cause;
-                    }
-                  }}
-                  onApprove={async (data) => {
-                    await completeOrder(data.orderID);
-                  }}
-                  onCancel={() => {
-                    setCapturing(false);
-                    setOutcome({
-                      kind: "cancelled",
-                      detail: "Checkout was cancelled. No donation was captured or added to the campaign.",
-                    });
-                  }}
-                  onError={(cause: unknown) => {
-                    setCapturing(false);
-                    if (checkoutStartError.current) {
-                      setError(checkoutStartError.current);
-                      checkoutStartError.current = null;
-                      return;
-                    }
-                    const msg = (cause as Error)?.message || String(cause) || "PayPal checkout failed.";
-                    setOutcome({ kind: "failed", detail: `Checkout could not complete: ${msg}. No donation was confirmed.` });
-                  }}
-                />
-              </PayPalScriptProvider>
-            </div>
-            <p className="text-center text-[11px] font-semibold text-slate-500 dark:text-slate-400">
-              No PayPal account required &mdash; debit and credit cards processed directly.
-            </p>
-          </div>
         ) : (
-          <div className="space-y-2">
-            <p className="text-xs text-amber-800 dark:text-amber-300">
-              PayPal Sandbox checkout is unavailable.
-              {allowSimulation
-                ? " You can make a simulated donation below; no PayPal payment is made."
-                : " Donations are unavailable until Sandbox checkout is configured."}
+          <div className="space-y-3">
+            <button type="button" disabled={!valid || capturing || awaitingPayment} onClick={() => void startPayPalCheckout()} className="button-gold flex w-full items-center justify-center rounded-full px-6 py-3.5 text-sm font-black disabled:cursor-not-allowed disabled:opacity-50">
+              {capturing ? "Opening PayPal Sandbox…" : `Continue to PayPal Sandbox${valid ? ` — ${currency} ${numAmount.toFixed(2)}` : ""}`}
+            </button>
+            <p className="text-center text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+              You will leave StraightMoney to approve this test payment on PayPal, then return here for confirmation.
             </p>
-            {allowSimulation && (
-              <button
-                type="button"
-                disabled={!valid || capturing || awaitingPayment}
-                onClick={handleSimulatedDonation}
-                className="w-full rounded-full bg-[#003087] px-5 py-3.5 text-sm font-extrabold text-white shadow-md shadow-blue-900/20 transition hover:bg-[#002060] disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {capturing ? "Processing..." : `Simulate donation - ${currency} ${Number(amount || 0).toFixed(2)}`}
-              </button>
-            )}
           </div>
         )}
 

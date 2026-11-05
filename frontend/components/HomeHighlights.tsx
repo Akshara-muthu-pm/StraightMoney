@@ -84,7 +84,7 @@ export default function HomeHighlights() {
               </div>
               {index === 0 && (
                 <div className="mt-8 border-t border-slate-100/80 pt-5">
-                  <Link href="#campaigns" className="button-primary text-xs shadow-md shadow-blue-900/15">
+                  <Link href="/explore" className="button-primary text-xs shadow-md shadow-blue-900/15">
                     Explore a campaign’s budget &rarr;
                   </Link>
                 </div>
@@ -104,7 +104,7 @@ export default function HomeHighlights() {
             Each campaign brings these pieces together in the campaign balance so you stay fully connected to the impact you create.
           </p>
         </div>
-        <Link href="#campaigns" className="button-gold text-xs font-black shadow-md shadow-[#FFC439]/30 hover:scale-105 shrink-0">
+        <Link href="/explore" className="button-gold text-xs font-black shadow-md shadow-[#FFC439]/30 hover:scale-105 shrink-0">
           Find a project to support
         </Link>
       </div>

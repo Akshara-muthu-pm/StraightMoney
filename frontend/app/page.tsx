@@ -1,6 +1,5 @@
 import ImpactExperience from "@/components/ImpactExperience";
 import Link from "next/link";
-import CampaignExplore from "@/components/CampaignExplore";
 import HomeHighlights from "@/components/HomeHighlights";
 import OurIdea from "@/components/OurIdea";
 import FundsJourney from "@/components/FundsJourney";
@@ -33,7 +32,7 @@ export default function HomePage() {
             Fund community projects where organizers never hold the money. Donors contribute via PayPal Orders v2 into the campaign balance, vendors submit invoices with delivery evidence, Python rules check invoice policy and Gemini adds advisory flags, and reviewers approve tracked PayPal Payouts.
           </p>
           <div className="mt-8 flex flex-wrap items-center gap-3.5">
-            <Link href="#campaigns" className="button-primary shadow-lg shadow-blue-950/20 text-sm">
+            <Link href="/explore" className="button-primary shadow-lg shadow-blue-950/20 text-sm">
               Explore campaigns
             </Link>
             <Link href="#how-it-works" className="button-secondary text-sm">
@@ -60,10 +59,6 @@ export default function HomePage() {
         </div>
         <ImpactExperience />
       </section>
-
-      <div className="page-width">
-        <CampaignExplore />
-      </div>
 
       <div className="border-y border-white/80 bg-white/50 backdrop-blur-xl shadow-sm">
         <div className="page-width flex flex-wrap justify-between gap-4 py-4 text-xs font-black tracking-wider text-[#003087]">
@@ -108,7 +103,7 @@ export default function HomePage() {
                 Every campaign has a public ledger of captured PayPal donations and confirmed vendor disbursements, with direct links to delivery evidence. Inspect every dollar before signing in.
               </p>
               <div className="mt-8 flex flex-wrap gap-4">
-                <Link href="#campaigns" className="button-gold text-xs font-black shadow-lg shadow-[#FFC439]/30 hover:scale-105">
+                <Link href="/explore" className="button-gold text-xs font-black shadow-lg shadow-[#FFC439]/30 hover:scale-105">
                   Explore campaigns &amp; view ledger
                 </Link>
                 <Link href="/ledger/1" className="button-secondary text-xs font-bold text-white border-white/30 bg-white/15 hover:bg-white/25">

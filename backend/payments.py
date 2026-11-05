@@ -31,6 +31,7 @@ import time
 from urllib.parse import urlparse
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 import dotenv
 import httpx
@@ -390,6 +391,9 @@ class PayPalClient:
             raise PayPalError(503, {"error": "paypal_not_configured"})
 
         url = f"{self._base_url}/v2/checkout/orders"
+        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000").rstrip("/")
+        return_url = f"{frontend_url}/donate/paypal-return?{urlencode({'campaign_id': campaign_id})}"
+        cancel_url = f"{frontend_url}/donate/paypal-return?{urlencode({'campaign_id': campaign_id, 'cancelled': 1})}"
         payload = {
             "intent": "CAPTURE",
             "purchase_units": [
@@ -402,12 +406,16 @@ class PayPalClient:
                     },
                 }
             ],
-            "application_context": {
-                "brand_name": "StraightMoney",
-                "landing_page": "NO_PREFERENCE",
-                "user_action": "PAY_NOW",
-                "return_url": os.getenv("FRONTEND_URL", "http://localhost:3000").rstrip("/") + "/",
-                "cancel_url": os.getenv("FRONTEND_URL", "http://localhost:3000").rstrip("/") + "/",
+            "payment_source": {
+                "paypal": {
+                    "experience_context": {
+                        "brand_name": "StraightMoney",
+                        "landing_page": "NO_PREFERENCE",
+                        "user_action": "PAY_NOW",
+                        "return_url": return_url,
+                        "cancel_url": cancel_url,
+                    }
+                }
             },
         }
 

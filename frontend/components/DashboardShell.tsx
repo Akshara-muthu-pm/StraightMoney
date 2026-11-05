@@ -46,7 +46,7 @@ export default function DashboardShell({
                 My dashboard
               </Link>
             )}
-            <Link href="/#campaigns" className="button-light text-xs">
+            <Link href="/explore" className="button-light text-xs">
               Browse campaigns
             </Link>
           </div>
@@ -59,7 +59,7 @@ export default function DashboardShell({
                 <span className="h-2 w-2 rounded-full bg-[#0070BA] animate-pulse" />
                 {role.toUpperCase()} WORKSPACE
               </div>
-              <Link href="/#campaigns" className="text-xs font-bold text-[#0070BA] hover:text-[#003087] underline underline-offset-4">
+              <Link href="/explore" className="text-xs font-bold text-[#0070BA] hover:text-[#003087] underline underline-offset-4">
                 Explore campaigns &rarr;
               </Link>
             </div>
