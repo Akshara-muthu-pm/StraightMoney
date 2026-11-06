@@ -9,10 +9,18 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 
 from config import settings
 
+# Use a larger pool for PostgreSQL (async FastAPI can saturate the default 5+10).
+_is_pg = settings.database_url.startswith("postgresql")
 engine = create_engine(
     settings.database_url,
-    connect_args={"connect_timeout": 5} if settings.database_url.startswith("postgresql") else {},
+    connect_args={"connect_timeout": 5} if _is_pg else {},
     pool_pre_ping=True,
+    **({
+        "pool_size": 10,
+        "max_overflow": 20,
+        "pool_timeout": 30,
+        "pool_recycle": 1800,  # Recycle connections every 30 min to avoid stale TCP issues.
+    } if _is_pg else {}),
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

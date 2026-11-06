@@ -86,9 +86,8 @@ test("approval and payment remain separate through the payout lifecycle", () => 
   assert.deepEqual(invoiceStages(invoice), { review: "Awaiting review", payment: "Not paid" });
   assert.deepEqual(invoiceStages({ ...invoice, status: "PAID", paid_amount: 400 }), { review: "Approved", payment: "Paid" });
 });
-test("a partial payment or sandbox override cannot look fully paid", () => {
+test("a partial payment cannot look fully paid", () => {
   assert.deepEqual(invoiceStages({ ...invoice, status: "PARTIALLY_PAID", paid_amount: 100 }), { review: "Approved", payment: "Partially paid" });
-  assert.deepEqual(invoiceStages({ ...invoice, verifications: [{ decision: "test_override" }], status: "FAILED" }), { review: "Sandbox override", payment: "Payment failed" });
 });
 test("rejected invoices do not appear approved", () => {
   assert.deepEqual(invoiceStages({ ...invoice, status: "REJECTED" }), { review: "Policy rejected", payment: "Not paid" });

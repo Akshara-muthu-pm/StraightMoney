@@ -5,7 +5,7 @@ const approvedStatuses = new Set(["VERIFIER_APPROVED", "AWAITING_FUNDS", "PARTIA
 export function budgetSummary(line: BudgetLine, invoices: Invoice[]) {
   const lineInvoices = invoices.filter((invoice) => invoice.budget_line_id === line.id);
   const approved = lineInvoices.filter((invoice) =>
-    invoice.verifications.some((decision) => decision.decision === "approve" || decision.decision === "test_override") ||
+    invoice.verifications.some((decision) => decision.decision === "approve") ||
     approvedStatuses.has(invoice.status)
   );
   const planned = line.budgeted_amount;

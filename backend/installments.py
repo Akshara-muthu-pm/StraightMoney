@@ -72,7 +72,7 @@ async def pay_available(db: Session, invoice: Invoice, paypal: PayPalClient) -> 
     campaign = db.query(Campaign).filter_by(id=invoice.campaign_id).with_for_update().populate_existing().one()
     invoice = db.query(Invoice).filter_by(id=invoice.id).with_for_update().populate_existing().one()
     db.expire(invoice, ["installments", "verifications", "payout"])
-    if not any(v.decision in {"approve", "test_override"} for v in invoice.verifications):
+    if not any(v.decision == "approve" for v in invoice.verifications):
         db.commit()
         return
     pending = next((p for p in invoice.installments if p.status == "pending"), None)
@@ -113,11 +113,10 @@ async def pay_available(db: Session, invoice: Invoice, paypal: PayPalClient) -> 
         invoice.status = "FAILED"
         db.commit()
         return
-    test_override = any(v.decision == "test_override" for v in invoice.verifications)
-    if (vendor is None or (not test_override and vendor.status != "active") or vendor.payout_email.strip().casefold() != invoice.payout_email.strip().casefold()
+    if (vendor is None or vendor.status != "active" or vendor.payout_email.strip().casefold() != invoice.payout_email.strip().casefold()
             or vendor.campaign_id != campaign.id or line.campaign_id != campaign.id
-            or (not test_override and (campaign.status != "active" or line.vendor_id != vendor.id
-                or invoice.currency != campaign.currency or amount > round(line.budgeted_amount - line.paid_amount, 2)))):
+            or campaign.status != "active" or line.vendor_id != vendor.id
+            or invoice.currency != campaign.currency or amount > round(line.budgeted_amount - line.paid_amount, 2)):
         invoice.status = "FAILED"
         db.commit()
         return
@@ -175,6 +174,4 @@ async def pay_campaign(db: Session, campaign_id: int, paypal: PayPalClient) -> N
     invoices = db.query(Invoice).filter(Invoice.campaign_id == campaign_id,
         Invoice.status.in_(["AWAITING_FUNDS", "PARTIALLY_PAID", "PAYOUT_PENDING"])).order_by(Invoice.id).all()
     for invoice in invoices:
-        if any(v.decision == "test_override" for v in invoice.verifications):
-            continue  # Test payouts are initiated only by the verifier's explicit action.
         await pay_available(db, invoice, paypal)

@@ -161,11 +161,6 @@ def test_verifier_endpoints_require_key(client, action: str, headers: dict):
     assert response.status_code == 401
 
 
-def test_test_override_requires_key(client):
-    response = client.post("/invoices/999/approve", json={"verifier_name": "Tester", "override_for_testing": True})
-    assert response.status_code == 401
-
-
 def test_verifier_account_passes_verifier_gate(client):
     with next(app.dependency_overrides[get_db]()) as db:
         db.add(User(id=99, email="reviewer@example.com", name="Reviewer", password_hash="fixture", role="verifier"))

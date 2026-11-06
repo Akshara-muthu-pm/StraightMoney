@@ -39,7 +39,7 @@ export default function HomeHighlights() {
           </div>
           <h2 id="impact-title" className="mt-4 text-4xl font-extrabold tracking-tight text-[#001435] sm:text-5xl">
             Your kindness.<br />
-            <span className="bg-gradient-to-r from-[#003087] to-[#0070BA] bg-clip-text text-transparent">
+            <span className="bg-gradient-to-r from-[#003087] to-[#0070BA] bg-clip-text text-transparent dark:from-[#BAE0FC] dark:to-white">
               A clearer path to impact.
             </span>
           </h2>

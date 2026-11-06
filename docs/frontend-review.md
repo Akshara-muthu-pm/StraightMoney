@@ -47,7 +47,7 @@ Before real authentication, backend identity must determine roles and permitted 
 ## Verification
 
 - Production build and ESLint passed. All nine state regression tests passed.
-- `npm run test:ui` runs nine Node regression tests covering role destinations, cumulative funding after payouts, review/payment separation, override/partial/rejected states, follow toggling, receipt capture/deduplication, and validation of stored demo state. The native TypeScript test loader requires Node 22.6+; Node 26 was used here.
+- `npm run test:ui` runs Node regression tests covering role destinations, cumulative funding after payouts, review/payment separation, partial and rejected states, follow toggling, receipt capture/deduplication, and validation of stored demo state. The native TypeScript test loader requires Node 22.6+; Node 26 was used here.
 - HTTP smoke checks returned 200 for the public homepage, sign-in, all four role routes, campaign detail, and ledger. Each had a main-content skip target; the library photo served as a JPEG.
 - Visual/browser interaction checks could not run because access to Chrome was not approved. HTTP and state tests do not certify layout quality or WCAG conformance. No Sandbox payment, payout, invoice upload, or campaign mutation was executed during this review.
 

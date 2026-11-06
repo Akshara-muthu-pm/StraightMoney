@@ -228,9 +228,10 @@ class CheckOut(BaseModel):
 class VerificationCreate(BaseModel):
     """Human verifier decision payload."""
 
+    model_config = ConfigDict(extra="forbid")
+
     verifier_name: Name
     note: Optional[str] = Field(default=None, max_length=5000)
-    override_for_testing: bool = False
 
 
 class VerificationOut(BaseModel):

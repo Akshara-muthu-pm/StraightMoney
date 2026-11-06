@@ -11,8 +11,8 @@ docker compose down -v
 docker compose up -d
 ```
 
-1. In root `.env`, set `PAYPAL_BASE_URL=https://api-m.sandbox.paypal.com`, working Sandbox business credentials, `LLM_API_KEY` and an available `LLM_MODEL`, `ENABLE_VERIFIER_TEST_OVERRIDE=false`, `ALLOW_SIMULATED_DONATIONS=false`, and a private `VERIFIER_KEY`. Confirm `DATABASE_URL` matches the fresh PostgreSQL container.
-2. In `frontend/.env.local`, set the matching `NEXT_PUBLIC_PAYPAL_CLIENT_ID`, `NEXT_PUBLIC_USE_MOCKS=false`, `NEXT_PUBLIC_ENABLE_VERIFIER_TEST_OVERRIDE=false`, and `NEXT_PUBLIC_ALLOW_SIMULATED_DONATIONS=false`. Keep `NEXT_PUBLIC_API_URL=http://localhost:8000`. Restart both servers after changing flags.
+1. In root `.env`, set `PAYPAL_BASE_URL=https://api-m.sandbox.paypal.com`, working Sandbox business credentials, `LLM_API_KEY` and an available `LLM_MODEL`, `ALLOW_SIMULATED_DONATIONS=false`, and a private `VERIFIER_KEY`. Confirm `DATABASE_URL` matches the fresh PostgreSQL container.
+2. In `frontend/.env.local`, set the matching `NEXT_PUBLIC_PAYPAL_CLIENT_ID`, `NEXT_PUBLIC_USE_MOCKS=false`, and `NEXT_PUBLIC_ALLOW_SIMULATED_DONATIONS=false`. Keep `NEXT_PUBLIC_API_URL=http://localhost:8000`. Restart both servers after changing flags.
 3. Confirm the Sandbox business account can send Payouts and that three Sandbox buyer checkouts can complete. A payout is **paid** only after PayPal confirms success; a restricted sender may leave it failed or pending.
 4. Start the API from `backend`: `uvicorn main:app --reload --port 8000`. Start the frontend from `frontend`: `npm run dev`. Open `http://localhost:3000` and check `http://localhost:8000/health`.
 5. Confirm the campaign shows a $1,200 goal and $0 available before donations. Open `/verifier`, enter `VERIFIER_KEY` once for the browser tab, and check the pending queue is empty. Keep the sample file table in [`../sample_invoices/README.md`](../sample_invoices/README.md) beside you.

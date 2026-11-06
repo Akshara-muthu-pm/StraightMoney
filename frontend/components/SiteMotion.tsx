@@ -75,7 +75,23 @@ export default function SiteMotion({ children }: { children: React.ReactNode }) 
       }
     };
     prepare(surface);
-    const mutations = new MutationObserver((records) => { for (const record of records) for (const node of record.addedNodes) if (node instanceof Element) prepare(node); });
+    // Debounce the MutationObserver callback so many rapid React re-renders
+    // are coalesced into a single prepare() call per animation frame,
+    // preventing repeated synchronous layout reads (getBoundingClientRect).
+    let mutationFrame = 0;
+    const pendingNodes = new Set<Element>();
+    const flushMutations = () => {
+      mutationFrame = 0;
+      for (const node of pendingNodes) prepare(node);
+      pendingNodes.clear();
+    };
+    const mutations = new MutationObserver((records) => {
+      for (const record of records)
+        for (const node of record.addedNodes)
+          if (node instanceof Element) pendingNodes.add(node);
+      if (pendingNodes.size > 0 && !mutationFrame)
+        mutationFrame = requestAnimationFrame(flushMutations);
+    });
     mutations.observe(surface, { childList: true, subtree: true });
     const onFocus = (event: FocusEvent) => {
       if (!(event.target instanceof Element)) return;
@@ -100,6 +116,7 @@ export default function SiteMotion({ children }: { children: React.ReactNode }) 
       surface.removeEventListener("keyup", onKeyUp);
       surface.removeEventListener("click", onClick);
       surface.removeEventListener("focusin", onFocus);
+      if (mutationFrame) cancelAnimationFrame(mutationFrame);
       observer.disconnect(); mutations.disconnect();
       for (const animation of animations.values()) animation.cancel();
       for (const element of observed) element.removeAttribute("data-entered");

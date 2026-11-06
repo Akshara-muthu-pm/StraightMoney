@@ -325,10 +325,6 @@ Each module has one owner at a time, so two people (or two AI tools) don't edit 
 
 Real money, user accounts and login, email intake, mobile app, multi-currency, multi-tenant support, tax receipts. Stretch only: webhooks, refunds of unspent funds to donors when a campaign is cancelled, a milestone timeline view.
 
-## Temporary sandbox verifier test override
-
-When `ENABLE_VERIFIER_TEST_OVERRIDE=true`, the verifier can click **Approve for sandbox test** on an unpaid invoice with a positive amount. This bypasses AI and application policy checks for one explicit sandbox payment attempt. It routes only to the vendor's registered email, uses the campaign currency, and sends at most the campaign's available balance. It records a `test_override` verification and audit entry. It does not automatically pay later donations toward this test invoice. PayPal still decides whether the payout can be sent, and only a confirmed success marks any amount paid. The override is refused outside the PayPal sandbox. Set `ENABLE_VERIFIER_TEST_OVERRIDE=false` and `NEXT_PUBLIC_ENABLE_VERIFIER_TEST_OVERRIDE=false` to remove it after testing.
-
 ## Security corrections to the Sandbox implementation
 
 The existing role-based demo flow is retained; no account system or PayPal escrow product is implied. New uploads are content-validated, bounded, stored in `files`, and publicly served with safe response headers. Malformed PDFs are rejected before extraction; readable but incomplete invoices become `NEEDS_REVIEW`. The no-key fallback requires explicit labeled total, currency, invoice number and payout email, and never guesses missing fields or verifies evidence. Extracted invoice numbers and document hashes govern duplicate checks. Approval revalidates policy and commitments while locking the campaign. Simulated donations remain visible but cannot reserve or fund PayPal payouts. Unknown capture responses remain pending, and uncertain payout responses retain their original idempotency key and funds reservation. Existing PostgreSQL databases receive additive migrations on startup.

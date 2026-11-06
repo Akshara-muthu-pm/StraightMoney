@@ -21,7 +21,7 @@ export default function OurIdea() {
             Bring generosity<br />and <span className="bg-gradient-to-r from-[#003087] to-[#0070BA] bg-clip-text text-transparent">accountability</span><br />into the same story.
           </h2>
           <p className="mt-6 max-w-lg text-base leading-relaxed text-slate-600">
-            Our goal is to help communities fund meaningful projects while giving supporters an a record of reviewed invoices and confirmed vendor payouts.
+            Our goal is to help communities fund meaningful projects while giving supporters a record of reviewed invoices and confirmed vendor payouts.
           </p>
           <p className="mt-4 max-w-lg text-sm leading-relaxed text-slate-500">
             StraightMoney connects published budgets, invoice reviews, automated Gemini checks, and immutable public ledger records in one place. Organizers never take custody of cash.

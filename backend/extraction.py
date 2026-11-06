@@ -21,14 +21,21 @@ from schemas import ExtractionResult
 from starlette.concurrency import run_in_threadpool
 
 
+# Module-level singleton — avoids allocating a new connection pool on every call.
+_client_instance: genai.Client | None = None
+
+
 def _get_client() -> genai.Client:
-    """Return an authenticated GenAI client instance."""
+    """Return a cached GenAI client, creating it once per process."""
+    global _client_instance
     api_key = settings.llm_api_key
     if not api_key or api_key.startswith("your-"):
         api_key = os.environ.get("GEMINI_API_KEY", "")
-    return genai.Client(api_key=api_key, http_options=types.HttpOptions(
-        timeout=60000, retry_options=types.HttpRetryOptions(attempts=1)
-    ))
+    if _client_instance is None:
+        _client_instance = genai.Client(api_key=api_key, http_options=types.HttpOptions(
+            timeout=60000, retry_options=types.HttpRetryOptions(attempts=1)
+        ))
+    return _client_instance
 
 
 class ExtractionError(Exception):

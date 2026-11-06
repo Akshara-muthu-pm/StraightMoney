@@ -76,7 +76,7 @@ class BudgetLine(Base):
     id = Column(Integer, primary_key=True, index=True)
     campaign_id = Column(Integer, ForeignKey("campaigns.id"), nullable=False, index=True)
     name = Column(String, nullable=False)
-    vendor_id = Column(Integer, ForeignKey("vendors.id"), nullable=True)
+    vendor_id = Column(Integer, ForeignKey("vendors.id"), nullable=True, index=True)
     budgeted_amount = Column(Float, nullable=False)
     paid_amount = Column(Float, default=0.0, nullable=False)
     created_at = Column(DateTime, default=_utcnow, nullable=False)
@@ -101,7 +101,7 @@ class Donation(Base):
     donor_name = Column(String, nullable=False)
     amount = Column(Float, nullable=False)
     currency = Column(String, nullable=False)
-    paypal_order_id = Column(String, unique=True, nullable=False)
+    paypal_order_id = Column(String, unique=True, nullable=False, index=True)
     source = Column(String, default="paypal", nullable=False)  # paypal | simulated
     status = Column(String, default="created", nullable=False)  # created | pending | captured | failed
     paypal_capture_status = Column(String, nullable=True)
@@ -128,8 +128,8 @@ class Invoice(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     campaign_id = Column(Integer, ForeignKey("campaigns.id"), nullable=False, index=True)
-    budget_line_id = Column(Integer, ForeignKey("budget_lines.id"), nullable=False)
-    vendor_id = Column(Integer, ForeignKey("vendors.id"), nullable=False)
+    budget_line_id = Column(Integer, ForeignKey("budget_lines.id"), nullable=False, index=True)
+    vendor_id = Column(Integer, ForeignKey("vendors.id"), nullable=False, index=True)
     invoice_number = Column(String, nullable=False)
     document_hash = Column(String(64), nullable=True, index=True)
     amount = Column(Float, nullable=False)
@@ -266,11 +266,11 @@ class AuditLog(Base):
     __tablename__ = "audit_log"
 
     id = Column(Integer, primary_key=True, index=True)
-    timestamp = Column(DateTime, default=_utcnow, nullable=False)
-    campaign_id = Column(Integer, nullable=True)
-    invoice_id = Column(Integer, nullable=True)
+    timestamp = Column(DateTime, default=_utcnow, nullable=False, index=True)
+    campaign_id = Column(Integer, nullable=True, index=True)
+    invoice_id = Column(Integer, nullable=True, index=True)
     actor = Column(String, nullable=False)
-    action = Column(String, nullable=False)
+    action = Column(String, nullable=False, index=True)
     detail = Column(Text, nullable=True)
 
 

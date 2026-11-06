@@ -109,74 +109,23 @@ def test_installment_detail_exposes_remaining_amount():
     db.close()
 
 
-@pytest.mark.asyncio
-async def test_sandbox_override_pays_rejected_invoice_with_missing_proof(monkeypatch):
-    import main
-    from schemas import VerificationCreate
-    db, campaign, line, invoice = setup_invoice()
-    db.query(Verification).delete()
-    invoice.status = "REJECTED"
-    invoice.extracted_json = '{}'
-    db.commit()
-    paypal = FakePayPal()
-    monkeypatch.setattr(main, "paypal", paypal)
-    monkeypatch.setattr(main.settings, "enable_verifier_test_override", True)
-    monkeypatch.setattr(main.settings, "paypal_base_url", "https://api-m.sandbox.paypal.com")
-    result = await main.approve_invoice(invoice.id, VerificationCreate(
-        verifier_name="Reviewer", note="Test the sandbox payout", override_for_testing=True), db)
-    assert result.status == "PARTIALLY_PAID"
-    assert result.paid_amount == 200
-    assert len(paypal.sent) == 1
-    db.close()
-
-
-@pytest.mark.asyncio
-async def test_override_routes_mismatched_invoice_to_registered_vendor(monkeypatch):
-    import main
-    from schemas import VerificationCreate
-    db, campaign, line, invoice = setup_invoice()
-    db.query(Verification).delete()
-    invoice.status = "REJECTED"
-    invoice.extracted_json = '{}'
-    invoice.payout_email = "attacker@example.com"
-    invoice.currency = "EUR"
-    invoice.amount = 1500  # exceeds the approved budget line
-    campaign.status = "closed"
-    invoice.vendor.status = "blocked"
-    db.commit()
-    paypal = FakePayPal()
-    monkeypatch.setattr(main, "paypal", paypal)
-    monkeypatch.setattr(main.settings, "enable_verifier_test_override", True)
-    monkeypatch.setattr(main.settings, "paypal_base_url", "https://api-m.sandbox.paypal.com")
-    result = await main.approve_invoice(invoice.id, VerificationCreate(
-        verifier_name="Sandbox tester", override_for_testing=True), db)
-    assert result.status == "PARTIALLY_PAID"
-    assert result.paid_amount == 200
-    assert paypal.sent[0]["payout_email"] == "vendor@example.com"
-    assert paypal.sent[0]["currency"] == "USD"
-    assert paypal.sent[0]["amount"] == 200
-    assert invoice.verifications[0].decision == "test_override"
-    campaign.pool_balance += 100
-    db.commit()
-    await pay_campaign(db, campaign.id, paypal)
-    assert len(paypal.sent) == 1
-    db.close()
-
-
-@pytest.mark.asyncio
-async def test_override_can_be_switched_off(monkeypatch):
-    import main
+def test_rejected_invoice_cannot_be_approved():
+    from main import _guard_invoice_status
     from fastapi import HTTPException
-    from schemas import VerificationCreate
     db, campaign, line, invoice = setup_invoice()
     invoice.status = "REJECTED"
     db.commit()
-    monkeypatch.setattr(main.settings, "enable_verifier_test_override", False)
     with pytest.raises(HTTPException) as error:
-        await main.approve_invoice(invoice.id, VerificationCreate(
-            verifier_name="Reviewer", note="Sandbox test", override_for_testing=True), db)
-    assert error.value.status_code == 403
+        _guard_invoice_status(invoice, "AWAITING_VERIFIER")
+    assert error.value.status_code == 409
     db.close()
+
+
+def test_verifier_payload_rejects_removed_override():
+    from pydantic import ValidationError
+    from schemas import VerificationCreate
+    with pytest.raises(ValidationError):
+        VerificationCreate(verifier_name="Reviewer", override_for_testing=True)
 
 
 @pytest.mark.asyncio

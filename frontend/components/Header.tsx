@@ -32,7 +32,7 @@ export default function Header() {
     <header className="site-header">
       <div className="page-width flex flex-wrap items-center justify-between gap-4 py-3.5">
         <Link href="/" className="flex items-center gap-3 text-lg font-bold tracking-tight group" aria-label="StraightMoney home">
-          <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-[#003087] via-[#00457C] to-[#0079C1] p-2 shadow-lg shadow-[#003087]/25 ring-1 ring-white/50 transition duration-300 group-hover:scale-105 group-hover:shadow-[#0070BA]/35" aria-hidden="true">
+          <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#003087] p-2" aria-hidden="true">
             <svg width="24" height="24" viewBox="0 0 32 32" fill="none" className="-rotate-6 transform drop-shadow-sm">
               {/* Back P (Deep Navy) */}
               <path
@@ -55,10 +55,6 @@ export default function Header() {
           <span className="flex items-baseline gap-2">
             <span className="text-xl font-extrabold tracking-tight text-[#001435]">
               Straight<span className="text-[#0070BA]">Money</span>
-            </span>
-            <span className="hidden items-center gap-1.5 rounded-full border border-blue-200/90 bg-gradient-to-r from-blue-50/95 to-sky-50/95 px-3 py-0.5 text-[10px] font-black tracking-wider text-[#003087] shadow-sm backdrop-blur-md sm:inline-flex">
-              <span className="h-1.5 w-1.5 rounded-full bg-[#0070BA] animate-pulse" />
-              PAYPAL SANDBOX
             </span>
           </span>
         </Link>
@@ -142,7 +138,7 @@ export default function Header() {
           </button>
           <Link
             href={/^\/campaigns\/\d+$/.test(pathname) ? `${pathname}#donate` : "/donate"}
-            className="button-gold text-xs font-black shadow-md shadow-[#FFC439]/25 hover:shadow-[#FFC439]/40"
+            className="button-gold text-xs font-bold"
           >
             {/^\/campaigns\/\d+$/.test(pathname) ? "Donate" : "Choose a cause"}
           </Link>

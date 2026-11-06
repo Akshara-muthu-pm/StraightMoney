@@ -37,7 +37,7 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.concurrency import run_in_threadpool
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload, selectinload
 from sqlalchemy import or_, text
 
 import audit
@@ -238,7 +238,7 @@ def _recheck_approval(db: Session, invoice: Invoice) -> None:
     others = db.query(Invoice).filter(Invoice.campaign_id == campaign.id, Invoice.id != invoice.id).all()
     committed = sum(other.remaining_amount for other in others
                     if other.budget_line_id == line.id and other.status != "PAID"
-                    and any(v.decision in {"approve", "test_override"} for v in other.verifications))
+                    and any(v.decision == "approve" for v in other.verifications))
     proof = any(file.kind == "proof" for file in invoice.files)
     if not proof and invoice.evidence_path and invoice.evidence_path != invoice.raw_file_path:
         path = Path(settings.upload_dir) / Path(invoice.evidence_path).name
@@ -331,7 +331,17 @@ def create_campaign(payload: CampaignCreate, db: Session = Depends(get_db), requ
 @router.get("/campaigns/{campaign_id}", response_model=CampaignDetail)
 def get_campaign(campaign_id: int, db: Session = Depends(get_db)):
     """Retrieve full campaign detail including vendors and budget lines."""
-    campaign = _get_or_404(db, Campaign, campaign_id)
+    campaign = (
+        db.query(Campaign)
+        .options(
+            selectinload(Campaign.vendors),
+            selectinload(Campaign.budget_lines).joinedload(BudgetLine.vendor),
+        )
+        .filter_by(id=campaign_id)
+        .first()
+    )
+    if campaign is None:
+        raise HTTPException(status_code=404, detail=f"Campaign {campaign_id} not found.")
     return CampaignDetail.model_validate(campaign)
 
 
@@ -814,7 +824,7 @@ async def submit_invoice(
         for other in existing_invoices
         if other.budget_line_id == budget_line_id and other.status in {
             "AWAITING_FUNDS", "PARTIALLY_PAID", "PAYOUT_PENDING", "FAILED"
-        } and any(v.decision in {"approve", "test_override"} for v in other.verifications)
+        } and any(v.decision == "approve" for v in other.verifications)
     )
     policy_results = run_policy_checks(invoice_data, campaign, budget_line, vendor, existing_invoices)
 
@@ -884,7 +894,17 @@ def list_all_invoices(
     db: Session = Depends(get_db),
 ):
     """List invoices, optionally filtered by campaign_id and status."""
-    query = db.query(Invoice)
+    query = (
+        db.query(Invoice)
+        .options(
+            joinedload(Invoice.vendor),
+            joinedload(Invoice.budget_line),
+            joinedload(Invoice.payout),
+            selectinload(Invoice.installments),
+            selectinload(Invoice.checks),
+            selectinload(Invoice.verifications),
+        )
+    )
     if campaign_id is not None:
         query = query.filter(Invoice.campaign_id == campaign_id)
     if status:
@@ -896,7 +916,21 @@ def list_all_invoices(
 @router.get("/invoices/{invoice_id}", response_model=InvoiceDetail)
 def get_invoice(invoice_id: int, db: Session = Depends(get_db)):
     """Retrieve full invoice detail including checks, verifications, and payout."""
-    invoice = _get_or_404(db, Invoice, invoice_id)
+    invoice = (
+        db.query(Invoice)
+        .options(
+            joinedload(Invoice.vendor),
+            joinedload(Invoice.budget_line),
+            joinedload(Invoice.payout),
+            selectinload(Invoice.installments),
+            selectinload(Invoice.checks),
+            selectinload(Invoice.verifications),
+        )
+        .filter_by(id=invoice_id)
+        .first()
+    )
+    if invoice is None:
+        raise HTTPException(status_code=404, detail=f"Invoice {invoice_id} not found.")
     return _invoice_to_detail(invoice)
 
 
@@ -911,6 +945,12 @@ def list_invoices(campaign_id: int, db: Session = Depends(get_db)):
     campaign = _get_or_404(db, Campaign, campaign_id)
     invoices = (
         db.query(Invoice)
+        .options(
+            joinedload(Invoice.vendor),
+            joinedload(Invoice.budget_line),
+            joinedload(Invoice.payout),
+            selectinload(Invoice.installments),
+        )
         .filter_by(campaign_id=campaign_id)
         .order_by(Invoice.created_at.desc())
         .all()
@@ -1020,37 +1060,15 @@ async def approve_invoice(
     invoice = _locked_invoice(db, invoice_id)
     if request is not None and (invoice.campaign.organizer_user_id == request.state.actor.id or invoice.vendor.user_id == request.state.actor.id):
         raise HTTPException(403, "A campaign participant cannot verify this invoice.")
-    if payload.override_for_testing:
-        if not settings.enable_verifier_test_override or settings.paypal_base_url.rstrip("/") != "https://api-m.sandbox.paypal.com":
-            raise HTTPException(status_code=403, detail="Verifier test override is available only in PayPal Sandbox when enabled.")
-        if invoice.status not in {"REJECTED", "AWAITING_VERIFIER", "NEEDS_REVIEW"}:
-            raise HTTPException(status_code=409, detail="Only an unpaid, unapproved invoice can use the test override.")
-        campaign = _get_or_404(db, Campaign, invoice.campaign_id)
-        budget_line = _get_or_404(db, BudgetLine, invoice.budget_line_id)
-        vendor = _get_or_404(db, Vendor, invoice.vendor_id)
-        if budget_line.campaign_id != campaign.id or vendor.campaign_id != campaign.id:
-            raise HTTPException(status_code=409, detail="Invoice vendor and budget line must belong to this campaign.")
-        if not math.isfinite(invoice.amount) or invoice.amount <= 0:
-            raise HTTPException(status_code=409, detail="A positive invoice amount is required to test a payout.")
-        original_email = invoice.payout_email
-        invoice.payout_email = vendor.payout_email
-        invoice.currency = campaign.currency
-        audit.log(db, actor=f"verifier:{request.state.actor.name if request is not None else payload.verifier_name}", action="invoice.sandbox_test_override",
-                  campaign_id=invoice.campaign_id, invoice_id=invoice.id,
-                  detail={"reason": payload.note or "Sandbox payout test",
-                          "bypassed_checks": [c.check_name for c in invoice.checks if not c.passed],
-                          "invoice_payout_email": original_email,
-                          "registered_vendor_email": vendor.payout_email}, commit=False)
-    else:
-        _guard_invoice_status(invoice, "AWAITING_VERIFIER")
-        _recheck_approval(db, invoice)
+    _guard_invoice_status(invoice, "AWAITING_VERIFIER")
+    _recheck_approval(db, invoice)
 
     # Record verification decision
     verification = Verification(
         invoice_id=invoice_id,
         verifier_name=request.state.actor.name if request is not None else payload.verifier_name,
-        decision="test_override" if payload.override_for_testing else "approve",
-        note=payload.note or ("Sandbox payout test" if payload.override_for_testing else None),
+        decision="approve",
+        note=payload.note,
     )
     db.add(verification)
     audit.log(
@@ -1181,8 +1199,8 @@ def get_ledger(campaign_id: int, db: Session = Depends(get_db)):
 
     entries: list[LedgerEntry] = []
 
-    # Donations
-    donations = db.query(Donation).filter_by(campaign_id=campaign_id).all()
+    # Donations (eager-load adjustments to avoid N+1 queries)
+    donations = db.query(Donation).options(selectinload(Donation.adjustments)).filter_by(campaign_id=campaign_id).all()
     for d in donations:
         entries.append(
             LedgerEntry(
@@ -1217,10 +1235,28 @@ def get_ledger(campaign_id: int, db: Session = Depends(get_db)):
                 proof_url=None, detail=row.detail, donation_id=donation.id))
 
     # One ledger entry per confirmed installment; include earlier single payouts.
-    invoices = db.query(Invoice).filter_by(campaign_id=campaign_id).all()
+    invoices = (
+        db.query(Invoice)
+        .options(
+            joinedload(Invoice.vendor),
+            joinedload(Invoice.payout),
+            joinedload(Invoice.delivery),
+            selectinload(Invoice.installments),
+        )
+        .filter_by(campaign_id=campaign_id)
+        .all()
+    )
+
+    # Pre-fetch all vendors in a single query to avoid N+1 round-trips per invoice.
+    vendor_ids = {inv.vendor_id for inv in invoices if inv.vendor_id is not None}
+    vendors_by_id: dict[int, Vendor] = (
+        {v.id: v for v in db.query(Vendor).filter(Vendor.id.in_(vendor_ids)).all()}
+        if vendor_ids else {}
+    )
+
     for inv in invoices:
         proof_url = f"/{inv.evidence_path.lstrip(chr(47))}" if inv.evidence_path else None
-        vendor = db.get(Vendor, inv.vendor_id)
+        vendor = vendors_by_id.get(inv.vendor_id)
         if inv.payout and inv.payout.status == "success":
             entries.append(LedgerEntry(type="payout", amount=inv.payout.amount,
                 actor_name=vendor.name if vendor else "Unknown Vendor", status="success",
@@ -1262,9 +1298,15 @@ def donor_updates(order_id: str, db: Session = Depends(get_db)):
     for row in rows:
         if row.action == "payout.success" and row.invoice_id is not None:
             last_success_id[row.invoice_id] = row.id
+    inv_ids = {row.invoice_id for row in rows if row.invoice_id}
+    invoices_map = {
+        inv.id: inv for inv in db.query(Invoice)
+        .options(joinedload(Invoice.budget_line), joinedload(Invoice.delivery))
+        .filter(Invoice.id.in_(inv_ids)).all()
+    } if inv_ids else {}
     updates = []
     for row in rows:
-        invoice = db.get(Invoice, row.invoice_id) if row.invoice_id else None
+        invoice = invoices_map.get(row.invoice_id) if row.invoice_id else None
         if invoice is None or invoice.campaign_id != donation.campaign_id:
             continue
         if row.action == "payout.success":

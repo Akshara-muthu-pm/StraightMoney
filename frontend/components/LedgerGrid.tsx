@@ -1,13 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { AgGridReact } from "ag-grid-react";
-import { AllCommunityModule, ModuleRegistry, themeQuartz, type ColDef } from "ag-grid-community";
+import { useMemo, useState, lazy, Suspense } from "react";
+import type { ColDef } from "ag-grid-community";
 import type { LedgerEntry } from "@/lib/types";
 import { api, USE_MOCKS } from "@/lib/api";
 import { useTheme } from "@/components/ThemeProvider";
 
-ModuleRegistry.registerModules([AllCommunityModule]);
+// Lazy-load ag-Grid and its ~500 kB bundle only when the user requests
+// the interactive grid view. The default "simple table" view loads instantly.
+const AgGridPanel = lazy(() => import("./LedgerAgGrid"));
 
 export default function LedgerGrid({ campaignId, entries }: { campaignId: number; entries: LedgerEntry[] }) {
   const { isDark } = useTheme();
@@ -18,6 +19,9 @@ export default function LedgerGrid({ campaignId, entries }: { campaignId: number
   const [answer, setAnswer] = useState("");
   const [askError, setAskError] = useState("");
   const [asking, setAsking] = useState(false);
+  // Track whether the interactive grid has ever been requested so we keep it
+  // mounted in the DOM (and thus don't re-initialise ag-Grid on every toggle).
+  const [gridRequested, setGridRequested] = useState(false);
 
   async function handleAsk(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -35,7 +39,9 @@ export default function LedgerGrid({ campaignId, entries }: { campaignId: number
       setAsking(false);
     }
   }
+
   const filtered = entries.filter((entry) => (!type || entry.type === type) && `${entry.actor_name} ${entry.type} ${entry.status} ${entry.detail ?? ""}`.toLowerCase().includes(query.trim().toLowerCase()));
+
   const columns = useMemo<ColDef<LedgerEntry>[]>(() => [
     { field: "created_at", headerName: "Date", valueFormatter: ({ value }) => value ? new Date(value as string).toLocaleDateString() : "", minWidth: 130 },
     { field: "type", headerName: "Type", minWidth: 110 },
@@ -46,27 +52,6 @@ export default function LedgerGrid({ campaignId, entries }: { campaignId: number
     { field: "proof_url", headerName: "Proof", cellRenderer: ({ value }: { value: string | null }) => { const url = api.assetUrl(value); return url ? <a className="font-medium text-brand-700 underline" href={url} target="_blank" rel="noreferrer">View proof</a> : <span className="text-slate-400">—</span>; }, minWidth: 120 },
   ], []);
 
-  const gridTheme = useMemo(() => {
-    if (isDark) {
-      return themeQuartz.withParams({
-        accentColor: "#009CDE",
-        backgroundColor: "#001435",
-        headerBackgroundColor: "#001c48",
-        foregroundColor: "#F5F8FC",
-        borderColor: "rgba(255, 255, 255, 0.12)",
-        headerTextColor: "#BAE0FC",
-        fontFamily: "var(--font-jakarta), system-ui, -apple-system, sans-serif",
-      });
-    }
-    return themeQuartz.withParams({
-      accentColor: "#0070BA",
-      backgroundColor: "#FFFFFF",
-      headerBackgroundColor: "#F0F7FD",
-      foregroundColor: "#001435",
-      borderColor: "#E1E7EC",
-      fontFamily: "var(--font-jakarta), system-ui, -apple-system, sans-serif",
-    });
-  }, [isDark]);
   return <div className="space-y-4">
     <div className="flex flex-wrap items-end gap-3">
       <label className="min-w-0 flex-1 text-xs font-bold uppercase tracking-wider text-slate-500">
@@ -93,8 +78,12 @@ export default function LedgerGrid({ campaignId, entries }: { campaignId: number
       </label>
       <button
         type="button"
-        aria-pressed={simpleView}
-        onClick={() => setSimpleView((value) => !value)}
+        aria-pressed={!simpleView}
+        onClick={() => {
+          const next = !simpleView;
+          setSimpleView(next);
+          if (!next) setGridRequested(true); // mark that the grid has been requested
+        }}
         className="rounded-full border border-slate-300 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:border-[#0070BA] hover:bg-slate-50"
       >
         {simpleView ? "Interactive grid" : "Simple table"}
@@ -143,17 +132,17 @@ export default function LedgerGrid({ campaignId, entries }: { campaignId: number
         {filtered.length === 0 && <p className="p-6 text-sm text-slate-500">No matching transactions found.</p>}
       </div>
     ) : (
-      <div className="h-[430px] w-full overflow-hidden rounded-2xl border border-slate-200 shadow-sm">
-        <AgGridReact
-          onGridReady={({ api: gridApi }) => gridApi.setGridAriaProperty("label", "Public donation and payout ledger")}
-          rowData={filtered}
-          columnDefs={columns}
-          defaultColDef={{ sortable: true, filter: true, resizable: true, flex: 1 }}
-          pagination
-          paginationPageSize={10}
-          paginationPageSizeSelector={[10, 20, 50]}
-          theme={gridTheme}
-        />
+      // Keep the lazy panel mounted once requested to avoid re-initialisation on retoggle.
+      <div style={{ display: simpleView ? "none" : undefined }}>
+        {gridRequested || !simpleView ? (
+          <Suspense fallback={
+            <div className="flex h-[430px] items-center justify-center rounded-2xl border border-slate-200 bg-white shadow-sm">
+              <p className="text-sm text-slate-500">Loading interactive grid…</p>
+            </div>
+          }>
+            <AgGridPanel filtered={filtered} columns={columns} isDark={isDark} />
+          </Suspense>
+        ) : null}
       </div>
     )}
     <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-[#001c48]" aria-labelledby="ledger-ask-title">
