@@ -1,5 +1,5 @@
 import { mockCampaign, mockCampaigns, mockInvoices, mockLedger } from "./mockData";
-import type { Campaign, CampaignCreate, CampaignSummary, DeliveryCloseout, Donation, DonationStatus, DonorUpdate, Invoice, LedgerEntry, VerificationRequest } from "./types";
+import type { Campaign, CampaignAvailability, CampaignCreate, CampaignSummary, DeliveryCloseout, Donation, DonationStatus, DonorUpdate, Invoice, LedgerEntry, VerificationRequest } from "./types";
 
 export const USE_MOCKS = process.env.NEXT_PUBLIC_USE_MOCKS === "true";
 export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
@@ -55,11 +55,28 @@ export const api = {
   logout: () => request<{ signed_out: boolean }>("/auth/logout", { method: "POST" }),
   myCampaigns: () => request<CampaignSummary[]>("/auth/my-campaigns"),
   myVendors: () => request<Array<{ id: number; campaign_id: number }>>("/auth/my-vendors"),
+  myPendingInvites: () => request<Array<{
+    invite_id: number;
+    vendor_id: number;
+    vendor_name: string;
+    campaign_id: number;
+    campaign_title: string;
+    organizer_name: string;
+    expires_at: string;
+  }>>("/auth/my-pending-invites"),
   inviteVendor: (campaignId: number, vendorId: number) => request<{ email: string; invite_token: string; expires_in_days: number }>(`/auth/campaigns/${campaignId}/vendors/${vendorId}/invite`, { method: "POST" }),
   acceptVendorInvite: (inviteToken: string) => request<{ campaign_id: number; vendor_id: number }>("/auth/accept-vendor-invite", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ invite_token: inviteToken }) }),
   claimCampaign: (campaignId: number, setupKey: string) => request<{ campaign_id: number; organizer: string }>(`/auth/campaigns/${campaignId}/claim`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ setup_key: setupKey }) }),
   reconciliationIssues: () => request<Array<{ id: number; event_id: string; campaign_id: number | null; reference: string | null; detail: string; created_at: string }>>("/auth/reconciliation-issues"),
   listCampaigns: async (): Promise<CampaignSummary[]> => USE_MOCKS ? mockCampaigns : request<CampaignSummary[]>("/campaigns"),
+  campaignAvailability: async (id: number): Promise<CampaignAvailability> => {
+    if (!USE_MOCKS) return request<CampaignAvailability>(`/campaigns/${id}/availability`);
+    const campaign = mockCampaigns.find((item) => item.id === id);
+    if (!campaign) throw new Error("Campaign not found in demo data.");
+    const raised = campaign.pool_balance + campaign.budget_lines.reduce((sum, line) => sum + line.paid_amount, 0);
+    return { goal: campaign.goal_amount, status: campaign.status, raised, reserved: 0,
+      remaining: Math.max(0, Math.round((campaign.goal_amount - raised) * 100) / 100) };
+  },
   getCampaign: async (id: number): Promise<Campaign> => {
     if (USE_MOCKS) {
       const match = mockCampaigns.find((c) => c.id === id);
@@ -86,6 +103,7 @@ export const api = {
   refundDonation: (id: number): Promise<Donation> => request<Donation>(`/donations/${id}/refund`, { method: "POST" }),
   createDonation: (campaignId: number, donor_name: string, amount: number, simulate: boolean = false): Promise<Donation> => USE_MOCKS ? Promise.resolve({ id: 99, campaign_id: campaignId, donor_name, amount, currency: "USD", paypal_order_id: `MOCK-ORDER-${Date.now()}`, source: simulate ? "simulated" : "paypal", status: "created", created_at: new Date().toISOString() }) : request<Donation>(`/campaigns/${campaignId}/donations`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ donor_name, amount, simulate }) }),
   captureDonation: (orderId: string): Promise<Donation> => USE_MOCKS ? Promise.resolve({ id: 99, campaign_id: 1, donor_name: "Demo Donor", amount: 0, currency: "USD", paypal_order_id: orderId, source: "paypal", status: "captured", created_at: new Date().toISOString() }) : request<Donation>(`/donations/${orderId}/capture`, { method: "POST" }),
+  releaseDonation: (orderId: string): Promise<Donation> => request<Donation>(`/donations/${encodeURIComponent(orderId)}/release`, { method: "POST" }),
   donationStatus: (orderId: string): Promise<DonationStatus> => request<DonationStatus>(`/donations/${encodeURIComponent(orderId)}/status`),
   donorUpdates: (orderId: string): Promise<DonorUpdate[]> => USE_MOCKS ? Promise.resolve([]) : request<DonorUpdate[]>(`/donations/${encodeURIComponent(orderId)}/updates`),
   campaignReportUrl: (campaignId: number): string => `${API_URL}/campaigns/${campaignId}/report.csv`,

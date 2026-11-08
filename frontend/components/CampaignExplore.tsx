@@ -7,6 +7,7 @@ import { api } from "@/lib/api";
 import type { Campaign } from "@/lib/types";
 import { money, totalFunded } from "@/lib/presentation";
 import { campaignImagery } from "@/lib/campaign-imagery";
+import { isStartupCampaign } from "@/lib/campaign-category";
 import ProgressBar from "./ProgressBar";
 import StatusBadge from "./StatusBadge";
 
@@ -22,7 +23,7 @@ export default function CampaignExplore() {
     let active = true;
     api.listCampaigns()
       .then((items) => Promise.all(
-        items.filter((item) => item.status !== "draft" && !/startup|drone|aerodrone/i.test(item.title))
+        items.filter((item) => item.status !== "draft" && !isStartupCampaign(item))
           .map((item) => api.getCampaign(item.id))
       ))
       .then((items) => {

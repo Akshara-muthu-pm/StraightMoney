@@ -44,6 +44,8 @@ StraightMoney enforces strict separation of duties, deterministic policy gates, 
 | **9. Reversals & Refunds** | Organizers can cancel campaigns to trigger full PayPal capture refunds to donors. PayPal dispute events place holds on available balances. |
 | **10. Transparent Ledger** | The public ledger records all donation captures, payout transfers, and verified reversals with links to raw evidence. Visitors can query ledger history using conversational natural language powered by Gemini (`POST /campaigns/{id}/ledger/ask`). |
 
+Campaign goals are hard caps for new checkouts. The API locks the campaign row and reserves the requested amount before creating a PayPal order; open reservations reduce the amount available to other donors. A completed capture moves the hold into raised funds, while a failed order or PayPal-confirmed void releases it. PayPal orders older than seven days are checked before their holds expire, and late returns cannot capture them. The `006_donation_capacity.sql` migration marks older orders as unreserved, and they must claim capacity before capture. Previously captured overfunding is retained in the ledger and requires a separate refund decision.
+
 ---
 
 ## Deterministic 8-Point Policy Engine

@@ -1,10 +1,58 @@
-"""Seed the section 14 demo campaign, vendors, and budget lines."""
+"""Seed example campaigns, vendors, and budget lines."""
 
 from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
 from models import BudgetLine, Campaign, Vendor
+
+
+PUBLIC_CAUSES = (
+    (
+        "Community Garden Beds",
+        "Build accessible garden beds and provide soil, seedlings, and tools for a neighborhood growing space.",
+        2400.0,
+        "Neighborhood Garden Collective",
+        (
+            ("Garden Supply Co.", "garden-supply@example.com", "Raised beds and lumber", 1050.0),
+            ("Green Earth Nursery", "green-earth@example.com", "Soil and seedlings", 850.0),
+            ("Community Tool Shed", "tool-shed@example.com", "Shared garden tools", 500.0),
+        ),
+    ),
+    (
+        "Neighborhood Food Pantry",
+        "Stock a community pantry with staple foods, storage shelves, and reusable distribution boxes.",
+        3200.0,
+        "Neighborhood Pantry Volunteers",
+        (
+            ("Local Food Cooperative", "food-coop@example.com", "Shelf-stable groceries", 2000.0),
+            ("Pantry Fixtures", "pantry-fixtures@example.com", "Storage shelves", 750.0),
+            ("Community Packaging", "packaging@example.com", "Reusable distribution boxes", 450.0),
+        ),
+    ),
+    (
+        "After-School Art Room",
+        "Equip an after-school art room with reusable supplies, worktables, and display materials.",
+        1800.0,
+        "Community Arts Circle",
+        (
+            ("Creative Supplies", "creative-supplies@example.com", "Paint, brushes, and paper", 800.0),
+            ("Workshop Furnishings", "workshop-furnishings@example.com", "Worktables and stools", 700.0),
+            ("Art Display Studio", "art-display@example.com", "Display boards and frames", 300.0),
+        ),
+    ),
+    (
+        "Park Cleanup Kit",
+        "Provide gloves, litter grabbers, sorting bins, and safety supplies for recurring park cleanups.",
+        1500.0,
+        "Friends of the Park",
+        (
+            ("Clean Streets Supply", "clean-streets@example.com", "Gloves and litter grabbers", 650.0),
+            ("Recycling Works", "recycling-works@example.com", "Sorting bins", 550.0),
+            ("Volunteer Safety Store", "volunteer-safety@example.com", "Safety vests and first-aid kits", 300.0),
+        ),
+    ),
+)
 
 
 def seed_demo_data(db: Session) -> None:
@@ -37,6 +85,33 @@ def seed_demo_data(db: Session) -> None:
             db.flush()
             db.add(BudgetLine(
                 campaign_id=campaign.id,
+                name=item,
+                vendor_id=vendor.id,
+                budgeted_amount=amount,
+                paid_amount=0.0,
+            ))
+        db.commit()
+
+    for title, description, goal, organizer, lines in PUBLIC_CAUSES:
+        if db.query(Campaign.id).filter_by(title=title).first():
+            continue
+        cause = Campaign(
+            title=title,
+            description=description,
+            goal_amount=goal,
+            currency="USD",
+            pool_balance=0.0,
+            status="active",
+            organizer_name=organizer,
+        )
+        db.add(cause)
+        db.flush()
+        for vendor_name, email, item, amount in lines:
+            vendor = Vendor(campaign_id=cause.id, name=vendor_name, payout_email=email, status="active")
+            db.add(vendor)
+            db.flush()
+            db.add(BudgetLine(
+                campaign_id=cause.id,
                 name=item,
                 vendor_id=vendor.id,
                 budgeted_amount=amount,

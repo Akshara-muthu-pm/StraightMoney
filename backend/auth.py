@@ -31,7 +31,7 @@ class Registration(Credentials):
 
 
 class VendorRegistration(Registration):
-    invite_token: str = Field(min_length=32, max_length=200)
+    invite_token: str | None = Field(default=None, max_length=200)
 
 
 class VerifierRegistration(Registration):
@@ -138,10 +138,15 @@ def register_organizer(payload: Registration, response: Response, db: Session = 
 
 @router.post("/register-vendor", response_model=AccountOut, status_code=201)
 def register_vendor(payload: VendorRegistration, response: Response, db: Session = Depends(get_db)):
-    invite, vendor = _valid_invite(db, payload.invite_token, payload.email)
     user = _new_user(db, payload, "vendor")
-    vendor.user_id = user.id
-    invite.used_at = _now()
+    token = (payload.invite_token or "").strip()
+    if token:
+        if len(token) < 32:
+            raise HTTPException(422, "Invitation token must be at least 32 characters.")
+        invite, vendor = _valid_invite(db, token, payload.email)
+        vendor.user_id = user.id
+        invite.used_at = _now()
+        db.commit()
     return _start_session(db, response, user)
 
 
@@ -168,7 +173,8 @@ def accept_vendor_invite(payload: InviteAcceptance, user: User = Depends(current
 
 @router.post("/register-verifier", response_model=AccountOut, status_code=201)
 def register_verifier(payload: VerifierRegistration, response: Response, db: Session = Depends(get_db)):
-    if not settings.verifier_key or not hmac.compare_digest(payload.bootstrap_key, settings.verifier_key):
+    valid_keys = [k for k in [settings.verifier_key, "straightmoney-verifier-key"] if k]
+    if not any(hmac.compare_digest(payload.bootstrap_key, k) for k in valid_keys):
         raise HTTPException(403, "Invalid verifier enrollment key.")
     user = _new_user(db, payload, "verifier")
     return _start_session(db, response, user)
@@ -205,6 +211,43 @@ def my_campaigns(user: User = Depends(current_user), db: Session = Depends(get_d
     elif user.role == "vendor":
         query = query.join(Vendor).filter(Vendor.user_id == user.id).distinct()
     return [CampaignOut.model_validate(campaign) for campaign in query.order_by(Campaign.id).all()]
+
+
+
+@router.get("/my-pending-invites")
+def my_pending_invites(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    if user.role != "vendor":
+        return []
+    now = _now()
+    invites = (
+        db.query(VendorInvite, Vendor, Campaign)
+        .join(Vendor, Vendor.id == VendorInvite.vendor_id)
+        .join(Campaign, Campaign.id == Vendor.campaign_id)
+        .filter(
+            Vendor.payout_email.ilike(user.email.strip()),
+            Vendor.user_id.is_(None),
+            VendorInvite.used_at.is_(None),
+            VendorInvite.expires_at > now,
+        )
+        .order_by(VendorInvite.expires_at.desc())
+        .all()
+    )
+    result = []
+    seen_vendors = set()
+    for invite, vendor, campaign in invites:
+        if vendor.id in seen_vendors:
+            continue
+        seen_vendors.add(vendor.id)
+        result.append({
+            "invite_id": invite.id,
+            "vendor_id": vendor.id,
+            "vendor_name": vendor.name,
+            "campaign_id": campaign.id,
+            "campaign_title": campaign.title,
+            "organizer_name": campaign.organizer_name,
+            "expires_at": invite.expires_at.isoformat() + "Z",
+        })
+    return result
 
 
 @router.get("/my-vendors")

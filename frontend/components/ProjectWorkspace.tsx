@@ -40,14 +40,30 @@ function WorkspaceContent({ role }: { role: "Organizer" | "Vendor" }) {
   const [assignedVendorIds, setAssignedVendorIds] = useState<number[]>([]);
   const [invite, setInvite] = useState<{ email: string; invite_token: string } | null>(null);
   const [inviteInput, setInviteInput] = useState("");
+  const [pendingInvites, setPendingInvites] = useState<Array<{
+    invite_id: number;
+    vendor_id: number;
+    vendor_name: string;
+    campaign_id: number;
+    campaign_title: string;
+    organizer_name: string;
+    expires_at: string;
+  }>>([]);
+  const [activePromptInviteId, setActivePromptInviteId] = useState<number | null>(null);
+  const [promptKey, setPromptKey] = useState("");
   const [claimId, setClaimId] = useState("1");
   const [setupKey, setSetupKey] = useState("");
   useEffect(() => {
     let active = true;
-    Promise.all([api.myCampaigns(), role === "Vendor" ? api.myVendors() : Promise.resolve([])]).then(([items, assignments]) => {
+    Promise.all([
+      api.myCampaigns(),
+      role === "Vendor" ? api.myVendors() : Promise.resolve([]),
+      role === "Vendor" ? api.myPendingInvites().catch(() => []) : Promise.resolve([]),
+    ]).then(([items, assignments, invites]) => {
       if (!active) return;
       setCampaigns(items);
       setAssignedVendorIds(assignments.map((item) => item.id));
+      setPendingInvites(invites as typeof pendingInvites);
       setSelectedId((current) => current ?? items[0]?.id ?? null);
       if (items.length === 0) setLoading(false);
     }).catch((cause: unknown) => { if (active) { setError(cause instanceof Error ? cause.message : "Could not load projects."); setLoading(false); } });
@@ -67,15 +83,102 @@ function WorkspaceContent({ role }: { role: "Organizer" | "Vendor" }) {
   const rows = invoices.filter((item) => role === "Organizer" || (vendor && item.vendor_id === vendor.id));
   const reload = () => { setLoading(true); setError(""); setRevision((value) => value + 1); };
   return <>
-    {role === "Vendor" && <form className="mb-5 flex flex-wrap items-end gap-2 rounded-2xl border border-blue-200 bg-blue-50 p-4" onSubmit={(event) => {
-      event.preventDefault();
-      api.acceptVendorInvite(inviteInput.trim()).then(() => { setInviteInput(""); setNotice("Assignment added."); reload(); }).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : "Could not accept invitation."));
-    }}>
-      <label className="min-w-52 flex-1 text-xs font-bold text-[#003087]">Add another vendor assignment
-        <input required value={inviteInput} onChange={(event) => setInviteInput(event.target.value)} placeholder="Invitation token" className="mt-1 block w-full rounded-lg border border-blue-200 bg-white p-2 text-sm" />
-      </label>
-      <button className="button-secondary text-xs">Accept invitation</button>
-    </form>}
+    {role === "Vendor" && pendingInvites.length > 0 && (
+      <div className="mb-6 space-y-3">
+        {pendingInvites.map((inv) => (
+          <div key={inv.invite_id} className="rounded-2xl border-2 border-blue-300 bg-gradient-to-r from-blue-50 to-indigo-50/60 p-5 shadow-xs dark:border-blue-700 dark:from-slate-900 dark:to-blue-950/40">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-100 px-2.5 py-0.5 text-[11px] font-bold text-[#003087] dark:bg-blue-950 dark:text-sky-300">
+                  <span className="h-1.5 w-1.5 rounded-full bg-blue-600 animate-pulse" />
+                  Campaign Invitation Waiting
+                </span>
+                <h3 className="mt-1.5 text-base font-extrabold text-[#001435] dark:text-white">
+                  {inv.campaign_title}
+                </h3>
+                <p className="mt-0.5 text-xs text-slate-600 dark:text-slate-300">
+                  Assigned Vendor Role: <strong>{inv.vendor_name}</strong> &middot; Organizer: <strong>{inv.organizer_name}</strong>
+                </p>
+              </div>
+
+              <div>
+                {activePromptInviteId === inv.invite_id ? (
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      api.acceptVendorInvite(promptKey.trim())
+                        .then(() => {
+                          setPromptKey("");
+                          setActivePromptInviteId(null);
+                          setNotice(`Accepted invitation for ${inv.campaign_title}. Your workspace is ready!`);
+                          reload();
+                        })
+                        .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : "Could not accept invitation. Please verify your invitation key."));
+                    }}
+                    className="flex flex-wrap items-center gap-2"
+                  >
+                    <input
+                      type="text"
+                      required
+                      minLength={32}
+                      placeholder="Paste 32+ char key from organizer"
+                      value={promptKey}
+                      onChange={(e) => setPromptKey(e.target.value)}
+                      className="rounded-xl border border-blue-300 bg-white px-3 py-1.5 text-xs text-[#001435] shadow-xs focus:outline-none focus:ring-2 focus:ring-[#0070BA] dark:bg-slate-800 dark:text-white min-w-[260px]"
+                    />
+                    <button type="submit" className="button-primary text-xs">Confirm Key</button>
+                    <button
+                      type="button"
+                      onClick={() => { setActivePromptInviteId(null); setPromptKey(""); }}
+                      className="text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400"
+                    >
+                      Cancel
+                    </button>
+                  </form>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => { setActivePromptInviteId(inv.invite_id); setPromptKey(""); }}
+                    className="button-primary text-xs"
+                  >
+                    Accept Invitation
+                  </button>
+                )}
+              </div>
+            </div>
+            {activePromptInviteId === inv.invite_id && (
+              <p className="mt-2.5 text-[11px] text-slate-500 dark:text-slate-400">
+                🔑 Enter the invitation key sent to you by organizer <strong>{inv.organizer_name}</strong> to unlock this assignment.
+              </p>
+            )}
+          </div>
+        ))}
+      </div>
+    )}
+
+    {role === "Vendor" && campaigns.length === 0 && pendingInvites.length === 0 && !loading && (
+      <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-8 text-center dark:border-slate-800 dark:bg-slate-900">
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-blue-50 text-2xl dark:bg-blue-950">
+          📦
+        </div>
+        <h3 className="mt-3 text-base font-bold text-[#001435] dark:text-white">No active campaign assignments yet</h3>
+        <p className="mx-auto mt-1 max-w-md text-xs text-slate-500 dark:text-slate-400">
+          When an organizer assigns your email to a campaign and sends an invitation, it will appear right here above. If you already have an invitation key, you can enter it below.
+        </p>
+      </div>
+    )}
+
+    {role === "Vendor" && (
+      <form className="mb-5 flex flex-wrap items-end gap-2 rounded-2xl border border-blue-200/70 bg-blue-50/50 p-4 dark:border-slate-800 dark:bg-slate-900/60" onSubmit={(event) => {
+        event.preventDefault();
+        api.acceptVendorInvite(inviteInput.trim()).then(() => { setInviteInput(""); setNotice("Assignment added."); reload(); }).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : "Could not accept invitation."));
+      }}>
+        <label className="min-w-52 flex-1 text-xs font-bold text-[#003087] dark:text-sky-300">Have an invitation key? Enter it here:
+          <input required value={inviteInput} onChange={(event) => setInviteInput(event.target.value)} placeholder="32-character invitation key" className="mt-1 block w-full rounded-lg border border-blue-200 bg-white p-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white" />
+        </label>
+        <button className="button-secondary text-xs">Accept key</button>
+      </form>
+    )}
     {role === "Organizer" && campaigns.length === 0 && !loading && <form className="mb-5 flex flex-wrap items-end gap-2 rounded-2xl border border-blue-200 bg-blue-50 p-4" onSubmit={(event) => {
       event.preventDefault();
       api.claimCampaign(Number(claimId), setupKey).then(() => { setSetupKey(""); setNotice("Existing campaign assigned to your account."); reload(); }).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : "Could not claim campaign."));

@@ -4,6 +4,7 @@ import { createDemoState, parseDemoState, toggleFollow, addReceipt, demoRoles } 
 import { budgetLineStatus, invoiceStages, totalFunded } from "../lib/presentation.ts";
 import { budgetSummary } from "../lib/budget.ts";
 import { campaignImagery } from "../lib/campaign-imagery.ts";
+import { isStartupCampaign } from "../lib/campaign-category.ts";
 import { impactShapes, interpolatePoints, shapePath } from "../lib/impact-motion.ts";
 import { releaseFrames, springResponse, tapFeedbackFrames } from "../lib/spring-motion.ts";
 
@@ -67,6 +68,15 @@ test("library imagery stays with library campaigns", () => {
   assert.equal(campaignImagery("School Library Corner").src, "/images/library.jpg");
   assert.equal(campaignImagery("School Library Corner", "detail").src, "/images/campaign-books.jpg");
   assert.notEqual(campaignImagery("Community food drive").src, "/images/library.jpg");
+});
+
+test("public causes and startups use one category rule", () => {
+  const campaigns = [
+    { title: "Community Makers", description: "A startup building a new prototype" },
+    { title: "School Library Corner", description: "Books for local students" },
+  ];
+  assert.deepEqual(campaigns.filter(isStartupCampaign).map((campaign) => campaign.title), ["Community Makers"]);
+  assert.deepEqual(campaigns.filter((campaign) => !isStartupCampaign(campaign)).map((campaign) => campaign.title), ["School Library Corner"]);
 });
 
 const invoice = { status: "AWAITING_VERIFIER", verifications: [], paid_amount: 0, remaining_amount: 400 };

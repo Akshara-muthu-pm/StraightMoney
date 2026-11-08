@@ -12,10 +12,10 @@ type Result =
   | { kind: "pending" }
   | { kind: "failed"; message: string }
   | { kind: "uncertain"; message: string }
-  | { kind: "cancelled" };
+  | { kind: "cancelled"; released: boolean };
 
 export default function PayPalReturnClient({ token, cancelled, campaignId }: { token: string | null; cancelled: boolean; campaignId: number | null }) {
-  const [result, setResult] = useState<Result>(cancelled ? { kind: "cancelled" } : token ? { kind: "checking" } : { kind: "failed", message: "PayPal did not return an order ID, so this payment cannot be confirmed here." });
+  const [result, setResult] = useState<Result>(cancelled ? { kind: "cancelled", released: false } : token ? { kind: "checking" } : { kind: "failed", message: "PayPal did not return an order ID, so this payment cannot be confirmed here." });
   const started = useRef(false);
 
   const checkPayment = useCallback(async (id: string) => {
@@ -42,6 +42,22 @@ export default function PayPalReturnClient({ token, cancelled, campaignId }: { t
     void checkPayment(token);
   }, [cancelled, checkPayment, token]);
 
+  useEffect(() => {
+    if (!cancelled || !token || started.current) return;
+    started.current = true;
+    void api.releaseDonation(token)
+      .then(async (donation) => {
+        if (donation.status === "captured") {
+          const campaign = await api.getCampaign(donation.campaign_id).catch(() => null);
+          recordReceipt(donation, campaign?.title ?? "Community campaign", "sandbox");
+          setResult({ kind: "captured", donation });
+        } else {
+          setResult({ kind: "cancelled", released: donation.status === "failed" });
+        }
+      })
+      .catch(() => setResult({ kind: "cancelled", released: false }));
+  }, [cancelled, token]);
+
   const backHref = campaignId ? `/campaigns/${campaignId}#donate` : "/donate";
   const ledgerHref = result.kind === "captured" ? `/ledger/${result.donation.campaign_id}` : campaignId ? `/ledger/${campaignId}` : null;
 
@@ -58,7 +74,9 @@ export default function PayPalReturnClient({ token, cancelled, campaignId }: { t
         <p className="mx-auto mt-5 max-w-lg text-sm leading-relaxed text-slate-600 sm:text-base">
           {result.kind === "checking" && "We are checking your PayPal order and campaign balance."}
           {result.kind === "captured" && `${result.donation.currency} ${result.donation.amount.toFixed(2)} was captured and added to the campaign.`}
-          {result.kind === "cancelled" && "You left PayPal without approving the payment. No donation was captured."}
+          {result.kind === "cancelled" && (result.released
+            ? "No donation was captured. The checkout hold has been released."
+            : "No donation was captured. The checkout hold remains until PayPal confirms cancellation or it expires.")}
           {result.kind === "pending" && "PayPal has not completed this payment. No funds have been added yet. Check its status before making another donation."}
           {(result.kind === "failed" || result.kind === "uncertain") && result.message}
         </p>

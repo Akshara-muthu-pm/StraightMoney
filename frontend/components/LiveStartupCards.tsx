@@ -5,11 +5,10 @@ import Image from "next/image";
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { campaignImagery } from "@/lib/campaign-imagery";
+import { isStartupCampaign } from "@/lib/campaign-category";
 import { money, totalFunded } from "@/lib/presentation";
 import type { Campaign } from "@/lib/types";
 import ProgressBar from "@/components/ProgressBar";
-
-const isStartup = (campaign: Campaign) => /startup|venture|drone|aerodrone|robotics|prototype|hardware/i.test(`${campaign.title} ${campaign.description ?? ""}`);
 
 export default function LiveStartupCards() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
@@ -18,8 +17,8 @@ export default function LiveStartupCards() {
   useEffect(() => {
     let active = true;
     api.listCampaigns()
-      .then((items) => Promise.all(items.filter((item) => item.status !== "draft").map((item) => api.getCampaign(item.id))))
-      .then((items) => { if (active) { setCampaigns(items.filter(isStartup)); setState("ready"); } })
+      .then((items) => Promise.all(items.filter((item) => item.status !== "draft" && isStartupCampaign(item)).map((item) => api.getCampaign(item.id))))
+      .then((items) => { if (active) { setCampaigns(items); setState("ready"); } })
       .catch(() => { if (active) setState("error"); });
     return () => { active = false; };
   }, []);

@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from db import Base
 from models import Campaign, Vendor, BudgetLine, Invoice, Verification, PayoutInstallment, StoredFile
+from models import Donation
 from installments import pay_available, _apply_status
 from schemas import VerificationCreate
 import main
@@ -81,6 +82,32 @@ def test_concurrent_allocation_reserves_and_debits_only_once(postgres):
     assert len(paypal.keys) == 1
 
 
+def test_concurrent_donors_cannot_reserve_more_than_campaign_goal(postgres):
+    engine, _ = postgres
+    with Session(engine) as db:
+        campaign = db.query(Campaign).one()
+        campaign.goal_amount = 300  # $200 raised, $100 available.
+        db.commit()
+        campaign_id = campaign.id
+    barrier = Barrier(2)
+
+    def worker(index):
+        with Session(engine) as db:
+            barrier.wait(timeout=10)
+            try:
+                main._reserve_donation(db, campaign_id,
+                    main.DonationCreate(donor_name=f"Donor {index}", amount=80, simulate=True))
+                return 201
+            except HTTPException as exc:
+                return exc.status_code
+
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        assert sorted(workers.map(worker, range(2))) == [201, 409]
+    with Session(engine) as db:
+        assert db.query(Donation).filter(Donation.status == "created").count() == 1
+        assert main._campaign_funding(db, db.get(Campaign, campaign_id))["remaining"] == 20
+
+
 def test_concurrent_settlement_is_idempotent(postgres):
     engine, invoice_id=postgres
     with Session(engine) as db:
@@ -137,21 +164,25 @@ def test_additive_migrations_upgrade_old_schema_and_repeat_safely(postgres,monke
         connection.execute(text("ALTER TABLE invoices DROP COLUMN document_hash"))
         connection.execute(text("ALTER TABLE donations DROP COLUMN source"))
         connection.execute(text("ALTER TABLE donations DROP COLUMN paypal_capture_status"))
+        connection.execute(text("ALTER TABLE donations DROP COLUMN capacity_reserved"))
     import db as database
     monkeypatch.setattr(database,"engine",engine)
     database.init_db()
     database.init_db()
     from sqlalchemy import inspect
     assert "document_hash" in {column["name"] for column in inspect(engine).get_columns("invoices")}
-    assert {"source","paypal_capture_status"} <= {column["name"] for column in inspect(engine).get_columns("donations")}
+    assert {"source","paypal_capture_status","capacity_reserved"} <= {column["name"] for column in inspect(engine).get_columns("donations")}
 
 
 def test_api_startup_and_real_sample_upload(postgres,monkeypatch):
+    from datetime import timedelta
     from pathlib import Path
     from fastapi.testclient import TestClient
     from sqlalchemy.orm import sessionmaker
     from config import settings
     from db import get_db
+    from auth import COOKIE_NAME, _digest, _now
+    from models import User, UserSession
     import db as database
     engine,_=postgres
     monkeypatch.setattr(database,"engine",engine)
@@ -169,6 +200,14 @@ def test_api_startup_and_real_sample_upload(postgres,monkeypatch):
             seeded=next(row for row in campaigns if row["title"]=="School Library Corner")
             campaign=browser.get(f'/campaigns/{seeded["id"]}').json()
             line=next(row for row in campaign["budget_lines"] if row["name"]=="Shelves")
+            with Session(engine) as db:
+                user=User(email="vendor-fixture@example.com",name="Vendor",password_hash="fixture",role="vendor")
+                db.add(user); db.flush()
+                db.get(Vendor,line["vendor_id"]).user_id=user.id
+                db.add(UserSession(user_id=user.id,token_hash=_digest("vendor-fixture"),
+                                   expires_at=_now()+timedelta(days=1)))
+                db.commit()
+            browser.cookies.set(COOKIE_NAME,"vendor-fixture")
             samples=Path(__file__).resolve().parents[2]/"sample_invoices"
             response=browser.post("/invoices",data={"campaign_id":campaign["id"],"budget_line_id":line["id"],"invoice_number":"SHELVES-001"},
                 files={"invoice_file":("invoice.pdf",(samples/"vendor_a_shelves_valid.pdf").read_bytes(),"application/pdf"),
