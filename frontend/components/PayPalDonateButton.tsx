@@ -1,9 +1,10 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { recordReceipt, useDemoSession } from "@/lib/demo-session";
+import type { CampaignAvailability } from "@/lib/types";
 
 const USE_MOCKS = process.env.NEXT_PUBLIC_USE_MOCKS === "true";
 
@@ -41,12 +42,36 @@ export default function PayPalDonateButton({
   const [error, setError] = useState("");
   const [outcome, setOutcome] = useState<Outcome | null>(null);
   const [capturing, setCapturing] = useState(false);
+  const [availability, setAvailability] = useState<CampaignAvailability | null>(null);
+  const [availabilityError, setAvailabilityError] = useState("");
   const helpId = useId();
   const configuredMaximum = Number(process.env.NEXT_PUBLIC_MAX_DONATION_AMOUNT || 5000);
   const maxDonationAmount = Number.isFinite(configuredMaximum) && configuredMaximum > 0 ? configuredMaximum : 5000;
+  const amountLimit = Math.min(maxDonationAmount, availability?.remaining ?? 0);
   const numAmount = Number(amount);
-  const valid = Boolean(name.trim()) && Number.isFinite(numAmount) && numAmount >= 0.01 && numAmount <= maxDonationAmount && Math.abs(numAmount * 100 - Math.round(numAmount * 100)) < 0.000001;
+  const valid = !availabilityError && Boolean(name.trim()) && Number.isFinite(numAmount) && numAmount >= 0.01 && numAmount <= amountLimit && availability?.status === "active" && Math.abs(numAmount * 100 - Math.round(numAmount * 100)) < 0.000001;
   const awaitingPayment = outcome?.kind === "pending" || outcome?.kind === "uncertain";
+
+  useEffect(() => {
+    let active = true;
+    api.campaignAvailability(campaignId)
+      .then((value) => { if (active) { setAvailability(value); setAvailabilityError(""); } })
+      .catch(() => { if (active) { setAvailability(null); setAvailabilityError("Could not check the remaining campaign amount. Please try again."); } });
+    return () => { active = false; };
+  }, [campaignId]);
+
+  const refreshAvailability = async () => {
+    try {
+      const value = await api.campaignAvailability(campaignId);
+      setAvailability(value);
+      setAvailabilityError("");
+      return value;
+    } catch (cause) {
+      setAvailability(null);
+      setAvailabilityError("Could not check the remaining campaign amount. Please try again.");
+      throw cause;
+    }
+  };
 
   const completeOrder = async (orderId: string) => {
     setCapturing(true);
@@ -73,6 +98,7 @@ export default function PayPalDonateButton({
       setError(cause instanceof Error ? cause.message : "Confirmation failed. Check status below.");
       setOutcome({ kind: "uncertain", orderId, detail: "We could not confirm the payment. Check status below." });
     } finally {
+      await refreshAvailability().catch(() => undefined);
       setCapturing(false);
     }
   };
@@ -83,6 +109,10 @@ export default function PayPalDonateButton({
     setError("");
     setOutcome(null);
     try {
+      const latest = await refreshAvailability();
+      if (latest.status !== "active" || numAmount > latest.remaining) {
+        throw new Error(`Only ${currency} ${latest.remaining.toFixed(2)} remains available for this campaign.`);
+      }
       const donation = await api.createDonation(campaignId, name.trim(), numAmount, false);
       if (!donation.approval_url) throw new Error("PayPal did not provide a checkout page. Please try again.");
       const approvalUrl = new URL(donation.approval_url);
@@ -92,14 +122,29 @@ export default function PayPalDonateButton({
       window.location.assign(approvalUrl.toString());
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not start PayPal checkout.");
+      await refreshAvailability().catch(() => undefined);
       setCapturing(false);
     }
   };
 
   return (
     <div className="space-y-5" aria-busy={capturing}>
+      <div role="status" className="rounded-xl bg-blue-50 px-4 py-3 text-xs font-bold text-[#003087] dark:bg-blue-950/40 dark:text-sky-200">
+        {availabilityError ? <><span>{availabilityError}</span> <button type="button" className="underline" onClick={() => void refreshAvailability().catch(() => undefined)}>Try again</button></>
+          : availability === null ? "Checking the remaining campaign amount…"
+          : availability.status !== "active" ? "This campaign is not accepting donations."
+          : availability.remaining <= 0 && availability.raised >= availability.goal ? "This campaign is fully funded and is no longer accepting donations."
+          : availability.remaining <= 0 ? `${currency} ${availability.reserved.toFixed(2)} is held in open checkouts. No donation capacity is available right now.`
+          : `${currency} ${availability.remaining.toFixed(2)} remains available${availability.reserved > 0 ? ` (${currency} ${availability.reserved.toFixed(2)} held in open checkouts)` : ""}.`}
+        {availability && availability.remaining <= 0 && availability.status === "active" && (
+          <button type="button" className="ml-2 underline" onClick={() => void refreshAvailability().catch(() => undefined)}>
+            Check availability
+          </button>
+        )}
+      </div>
+      {amountLimit > 0 && <>
       {/* Optimized Preset Amount Tiles */}
-      <fieldset disabled={capturing || awaitingPayment} className="space-y-2">
+      <fieldset disabled={capturing || awaitingPayment || amountLimit <= 0} className="space-y-2">
         <div className="flex items-center justify-between">
           <legend className="text-xs font-extrabold uppercase tracking-wider text-slate-600 dark:text-slate-400">
             Select Donation Amount ({currency})
@@ -119,6 +164,7 @@ export default function PayPalDonateButton({
               <button
                 key={tier.value}
                 type="button"
+                disabled={tier.value > amountLimit}
                 aria-pressed={isSelected}
                 onClick={() => {
                   setAmount(String(tier.value));
@@ -174,7 +220,7 @@ export default function PayPalDonateButton({
                 autoComplete="name"
                 maxLength={100}
                 required
-                disabled={capturing || awaitingPayment}
+                disabled={capturing || awaitingPayment || amountLimit <= 0}
                 aria-describedby={helpId}
                 value={name}
                 onChange={(event) => setName(event.target.value)}
@@ -195,12 +241,12 @@ export default function PayPalDonateButton({
               </span>
               <input
                 required
-                disabled={capturing || awaitingPayment}
+                disabled={capturing || awaitingPayment || amountLimit <= 0}
                 inputMode="decimal"
                 aria-describedby={helpId}
                 type="number"
                 min="0.01"
-                max={maxDonationAmount}
+                max={amountLimit}
                 step="0.01"
                 value={amount}
                 onChange={(event) => setAmount(event.target.value)}
@@ -211,7 +257,7 @@ export default function PayPalDonateButton({
         </div>
 
         <p id={helpId} className="text-[11px] leading-5 text-slate-500 dark:text-slate-400 font-medium">
-          Enter your name and 0.01–{maxDonationAmount} {currency}. Your name appears on the public ledger.
+          Enter your name and up to {currency} {amountLimit.toFixed(2)}. Your name appears on the public ledger.
         </p>
       </div>
 
@@ -308,6 +354,7 @@ export default function PayPalDonateButton({
           </p>
         </details>
       </div>
+      </>}
 
       {capturing && (
         <div role="status" className="flex items-center gap-2 text-xs font-bold text-[#0070BA]">

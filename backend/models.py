@@ -104,6 +104,7 @@ class Donation(Base):
     paypal_order_id = Column(String, unique=True, nullable=False, index=True)
     source = Column(String, default="paypal", nullable=False)  # paypal | simulated
     status = Column(String, default="created", nullable=False)  # created | pending | captured | failed
+    capacity_reserved = Column(Boolean, default=False, nullable=False)
     paypal_capture_status = Column(String, nullable=True)
     paypal_capture_id = Column(String(100), nullable=True, index=True)
     refund_request_id = Column(String(100), nullable=True)

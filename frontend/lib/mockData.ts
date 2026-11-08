@@ -46,7 +46,46 @@ export const mockStartupCampaign: Campaign = {
   ],
 };
 
-export const mockCampaigns: Campaign[] = [mockCampaign, mockStartupCampaign];
+const publicCauseExamples = [
+  { id: 4, title: "Community Garden Beds", description: "Build accessible garden beds and provide soil, seedlings, and tools for a neighborhood growing space.", goal: 2400, organizer: "Neighborhood Garden Collective", items: [["Raised beds and lumber", 1050], ["Soil and seedlings", 850], ["Shared garden tools", 500]] },
+  { id: 5, title: "Neighborhood Food Pantry", description: "Stock a community pantry with staple foods, storage shelves, and reusable distribution boxes.", goal: 3200, organizer: "Neighborhood Pantry Volunteers", items: [["Shelf-stable groceries", 2000], ["Storage shelves", 750], ["Reusable distribution boxes", 450]] },
+  { id: 6, title: "After-School Art Room", description: "Equip an after-school art room with reusable supplies, worktables, and display materials.", goal: 1800, organizer: "Community Arts Circle", items: [["Paint, brushes, and paper", 800], ["Worktables and stools", 700], ["Display boards and frames", 300]] },
+  { id: 7, title: "Park Cleanup Kit", description: "Provide gloves, litter grabbers, sorting bins, and safety supplies for recurring park cleanups.", goal: 1500, organizer: "Friends of the Park", items: [["Gloves and litter grabbers", 650], ["Sorting bins", 550], ["Safety vests and first-aid kits", 300]] },
+] as const;
+
+export const mockCampaigns: Campaign[] = [
+  mockCampaign,
+  mockStartupCampaign,
+  ...publicCauseExamples.map((example) => ({
+    id: example.id,
+    title: example.title,
+    description: example.description,
+    goal_amount: example.goal,
+    currency: "USD",
+    pool_balance: 0,
+    status: "active" as const,
+    organizer_name: example.organizer,
+    created_at: created,
+    vendors: example.items.map((_, index) => ({
+      id: example.id * 10 + index,
+      campaign_id: example.id,
+      name: `Demo Vendor ${index + 1}`,
+      payout_email: `cause-${example.id}-vendor-${index + 1}@example.com`,
+      status: "active" as const,
+      created_at: created,
+    })),
+    budget_lines: example.items.map(([name, amount], index) => ({
+      id: example.id * 10 + index,
+      campaign_id: example.id,
+      name,
+      vendor_id: example.id * 10 + index,
+      vendor_name: `Demo Vendor ${index + 1}`,
+      budgeted_amount: amount,
+      paid_amount: 0,
+      created_at: created,
+    })),
+  })),
+];
 
 export const mockDonations: Donation[] = [
   { id: 1, campaign_id: 1, donor_name: "Alice Johnson", amount: 500, currency: "USD", paypal_order_id: "DEMO-ORDER-001", source: "simulated", status: "captured", created_at: "2026-10-29T11:00:00Z" },

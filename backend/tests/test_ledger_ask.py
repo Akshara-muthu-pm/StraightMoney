@@ -87,3 +87,29 @@ async def test_gemini_receives_ledger_json_and_cannot_return_empty(monkeypatch):
     prompt = generate.await_args.args[0]
     assert '"actor_name": "Vendor A"' in prompt
     assert "only when type is payout and status is success" in prompt
+
+
+@pytest.mark.asyncio
+async def test_top_paid_vendor_uses_only_confirmed_payouts_without_gemini(monkeypatch):
+    generate = AsyncMock(side_effect=RuntimeError("Gemini unavailable"))
+    monkeypatch.setattr(advisory, "_call_gemini_text", generate)
+    ledger = [
+        {"type": "payout", "actor_name": "Vendor A", "amount": 20, "status": "success"},
+        {"type": "payout", "actor_name": "Vendor A", "amount": 35, "status": "success"},
+        {"type": "payout", "actor_name": "Vendor B", "amount": 50, "status": "success"},
+        {"type": "payout", "actor_name": "Vendor B", "amount": 100, "status": "pending"},
+        {"type": "donation", "actor_name": "Vendor B", "amount": 500, "status": "captured"},
+    ]
+    answer = await advisory.answer_ledger_question("Which vendor got paid the most?", ledger, "USD")
+    assert answer == "Vendor A received the most in confirmed payouts: USD 55.00."
+    generate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_top_paid_vendor_reports_when_no_confirmed_payout_exists(monkeypatch):
+    monkeypatch.setattr(advisory.settings, "llm_api_key", "")
+    answer = await advisory.answer_ledger_question("which vendor got paid the most", [
+        {"type": "donation", "actor_name": "Donor", "amount": 1000, "status": "captured"},
+        {"type": "payout", "actor_name": "Vendor A", "amount": 50, "status": "pending"},
+    ], "USD")
+    assert answer == "No vendors have received a confirmed payout in this campaign."

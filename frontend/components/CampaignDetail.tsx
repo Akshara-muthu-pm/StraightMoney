@@ -16,7 +16,8 @@ import StatusBadge from "@/components/StatusBadge";
 function lineStatus(invoices: Invoice[]) {
   if (invoices.some((invoice) => invoice.delivery?.accepted_at)) return "Delivered";
   if (invoices.some((invoice) => invoice.status === "PAID")) return "Paid";
-  if (invoices.some((invoice) => invoice.status === "VERIFIER_APPROVED" || invoice.status === "PAYOUT_PENDING" || invoice.status === "PARTIALLY_PAID")) return "Approved";
+  if (invoices.some((invoice) => ["VERIFIER_APPROVED", "PAYOUT_PENDING", "PARTIALLY_PAID"].includes(invoice.status))) return "Approved";
+  if (invoices.some((invoice) => invoice.status === "FAILED")) return "Payout pending";
   if (invoices.some((invoice) => invoice.status === "REJECTED" || invoice.status === "VERIFIER_REJECTED")) return "Rejected";
   if (invoices.length > 0) return "In review";
   return "Awaiting vendor";

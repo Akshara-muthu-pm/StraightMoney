@@ -38,7 +38,7 @@ export default function SignInPage() {
         ? await api.login(email, password)
         : await api.registerAccount(activeRole, {
             name, email, password,
-            ...(activeRole === "vendor" ? { invite_token: inviteToken } : {}),
+            ...(activeRole === "vendor" && inviteToken.trim() ? { invite_token: inviteToken.trim() } : {}),
             ...(activeRole === "verifier" ? { bootstrap_key: bootstrapKey } : {}),
           });
       signOutDemo();
@@ -87,15 +87,12 @@ export default function SignInPage() {
             </label>
             <label htmlFor="account-password">Password
               <span className={styles.passwordField}>
-                <input id="account-password" required type={showPassword ? "text" : "password"} minLength={authTab === "register" ? 12 : undefined} value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={authTab === "register" ? "new-password" : "current-password"} placeholder={authTab === "register" ? "At least 12 characters" : "Enter your password"} />
+                <input id="account-password" required type={showPassword ? "text" : "password"} minLength={12} value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={authTab === "register" ? "new-password" : "current-password"} placeholder={authTab === "register" ? "At least 12 characters" : "Enter your password"} />
                 <button type="button" onClick={() => setShowPassword((value) => !value)} aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? "Hide" : "Show"}</button>
               </span>
             </label>
-            {authTab === "register" && activeRole === "vendor" && <label htmlFor="vendor-invite">Invitation token
-              <input id="vendor-invite" required value={inviteToken} onChange={(event) => setInviteToken(event.target.value)} autoComplete="off" placeholder="Token from your organizer" />
-            </label>}
             {authTab === "register" && activeRole === "verifier" && <label htmlFor="verifier-key">Verifier enrollment key
-              <input id="verifier-key" required type="password" value={bootstrapKey} onChange={(event) => setBootstrapKey(event.target.value)} autoComplete="off" placeholder="Enter your enrollment key" />
+              <input id="verifier-key" required type="password" value={bootstrapKey} onChange={(event) => setBootstrapKey(event.target.value)} autoComplete="off" placeholder="Enter your private enrollment key" />
             </label>}
             {error && <p className={styles.error} role="alert">{error}</p>}
             <button type="submit" disabled={pending} className={styles.submit}>{pending ? "Please wait…" : authTab === "login" ? "Sign in" : "Create account"}</button>

@@ -165,13 +165,13 @@ export default function LedgerGrid({ campaignId, entries }: { campaignId: number
           {asking ? "Finding answer…" : "Ask"}
         </button>
       </form>
-      {USE_MOCKS && <p className="mt-3 text-xs text-slate-500">Questions are available with the live API and Gemini.</p>}
+      {USE_MOCKS && <p className="mt-3 text-xs text-slate-500">Questions are available with the live API.</p>}
       <div aria-live="polite" aria-atomic="true" className="mt-4 text-sm">
         {asking && <p className="text-slate-500">Reading the ledger…</p>}
         {answer && <p className="rounded-xl bg-[#F0F7FD] p-4 leading-relaxed text-[#001435] dark:bg-[#002b62] dark:text-white">{answer}</p>}
         {askError && <p role="alert" className="rounded-xl bg-red-50 p-4 text-red-800">{askError}</p>}
       </div>
-      <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">AI answers summarize the public ledger. Check the transactions above for the source records.</p>
+      <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">Answers summarize the public ledger. Check the transactions above for the source records.</p>
     </section>
   </div>;
 }

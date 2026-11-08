@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     paypal_client_secret: str = ""
     paypal_base_url: str = "https://api-m.sandbox.paypal.com"
     paypal_simulate_payouts: bool = False
-    allow_simulated_donations: bool = False
+    allow_simulated_donations: bool = True
     max_donation_amount: float = Field(default=5000, gt=0, allow_inf_nan=False)
     verifier_key: str = ""
     admin_setup_key: str = ""
