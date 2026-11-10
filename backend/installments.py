@@ -72,7 +72,7 @@ async def pay_available(db: Session, invoice: Invoice, paypal: PayPalClient) -> 
     campaign = db.query(Campaign).filter_by(id=invoice.campaign_id).with_for_update().populate_existing().one()
     invoice = db.query(Invoice).filter_by(id=invoice.id).with_for_update().populate_existing().one()
     db.expire(invoice, ["installments", "verifications", "payout"])
-    if not any(v.decision == "approve" for v in invoice.verifications):
+    if invoice.status in {"MORE_EVIDENCE_REQUIRED", "ESCALATED", "SUBMITTED", "EXTRACTED", "CHECKED", "NEEDS_REVIEW", "AWAITING_VERIFIER"} or not any(v.decision == "approve" for v in invoice.verifications):
         db.commit()
         return
     pending = next((p for p in invoice.installments if p.status == "pending"), None)

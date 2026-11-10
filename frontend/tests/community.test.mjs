@@ -93,8 +93,8 @@ test("approval and payment remain separate through the payout lifecycle", () => 
   for (const [status, expected] of [["AWAITING_FUNDS", "Awaiting funds"], ["PAYOUT_PENDING", "Awaiting PayPal confirmation"], ["FAILED", "Payment failed"]]) {
     assert.deepEqual(invoiceStages({ ...invoice, status }), { review: "Approved", payment: expected });
   }
-  assert.deepEqual(invoiceStages(invoice), { review: "Awaiting review", payment: "Not paid" });
-  assert.deepEqual(invoiceStages({ ...invoice, status: "PAID", paid_amount: 400 }), { review: "Approved", payment: "Paid" });
+  assert.deepEqual(invoiceStages(invoice), { review: "Awaiting independent review", payment: "Not paid" });
+  assert.deepEqual(invoiceStages({ ...invoice, status: "PAID", paid_amount: 400 }), { review: "Approved", payment: "Payment successful" });
 });
 test("a partial payment cannot look fully paid", () => {
   assert.deepEqual(invoiceStages({ ...invoice, status: "PARTIALLY_PAID", paid_amount: 100 }), { review: "Approved", payment: "Partially paid" });
@@ -109,7 +109,7 @@ test("budget line badges use the existing invoices and keep unfinished work visi
   assert.equal(budgetLineStatus(1, [row(1, "REJECTED"), row(2, "PAID")]), "rejected");
   assert.equal(budgetLineStatus(1, [row(1, "VERIFIER_REJECTED")]), "rejected");
   assert.equal(budgetLineStatus(1, [row(1, "PAID"), row(1, "REJECTED")]), "paid");
-  assert.equal(budgetLineStatus(1, [row(1, "PAID"), row(1, "PAYOUT_PENDING")]), "in-review");
+  assert.equal(budgetLineStatus(1, [row(1, "PAID"), row(1, "PAYOUT_PENDING")]), "payment-pending");
   assert.equal(budgetLineStatus(1, [row(1, "AWAITING_VERIFIER")]), "in-review");
 });
 test("budget separates approved commitments from confirmed payouts", () => {
@@ -148,4 +148,24 @@ test("fresh sessions start empty and stored role state is validated", () => {
   for (const raw of ["broken json", "null", JSON.stringify({ ...state, role: "Admin" }), JSON.stringify({ ...state, followed: ["bad"] }), JSON.stringify({ ...state, receipts: [{}] })]) {
     assert.equal(parseDemoState(raw), null);
   }
+});
+
+test("evidence requests and escalations remain unpaid and never appear approved", () => {
+  assert.deepEqual(invoiceStages({...invoice, status: "MORE_EVIDENCE_REQUIRED"}), {review: "More evidence required", payment: "Not paid"});
+  assert.deepEqual(invoiceStages({...invoice, status: "ESCALATED"}), {review: "Escalated — investigation required", payment: "Not paid"});
+  assert.equal(invoiceStages({...invoice, status: "AWAITING_VERIFIER", verifications: [{decision: "request_evidence"}]}).review, "Awaiting independent review");
+});
+
+test("simulated payouts never appear as vendor paid",()=>{assert.equal(invoiceStages({...invoice,status:"FAILED",payment_mode:"simulated",paid_amount:0}).payment,"Simulated — no funds sent");});
+
+test("approval never stays in review and success requires confirmed payment", () => {
+  const row = (status, extra={}) => ({budget_line_id:1,status,...extra});
+  assert.equal(budgetLineStatus(1,[row("AWAITING_FUNDS")]),"approved");
+  assert.equal(budgetLineStatus(1,[row("PAYOUT_PENDING")]),"payment-pending");
+  assert.equal(budgetLineStatus(1,[row("FAILED")]),"payment-failed");
+  assert.equal(budgetLineStatus(1,[row("PARTIALLY_PAID")]),"partially-paid");
+  assert.equal(budgetLineStatus(1,[row("FAILED",{payment_mode:"simulated"})]),"simulated");
+  assert.equal(budgetLineStatus(1,[row("PAID")]),"paid");
+  assert.equal(budgetLineStatus(1,[row("MORE_EVIDENCE_REQUIRED")]),"evidence-required");
+  assert.equal(budgetLineStatus(1,[row("ESCALATED")]),"escalated");
 });

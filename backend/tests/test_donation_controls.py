@@ -103,7 +103,7 @@ def test_real_order_returns_sandbox_approval_link(client, monkeypatch):
     assert response.json()["approval_url"] == "https://www.sandbox.paypal.com/checkoutnow?token=ORDER-REDIRECT"
 
 
-def test_open_orders_reserve_capacity_until_paypal_confirms_void(client, monkeypatch):
+def test_open_orders_do_not_reserve_capacity(client, monkeypatch):
     orders = []
     order_status = {"ORDER-1": "CREATED"}
 
@@ -121,14 +121,14 @@ def test_open_orders_reserve_capacity_until_paypal_confirms_void(client, monkeyp
     monkeypatch.setattr(main.paypal, "get_order", get_order)
     first = client.post("/campaigns/1/donations", json={"donor_name": "A", "amount": 80})
     assert first.status_code == 201
-    assert client.get("/campaigns/1/availability").json()["remaining"] == 20
+    assert client.get("/campaigns/1/availability").json()["remaining"] == 100
     blocked = client.post("/campaigns/1/donations", json={"donor_name": "B", "amount": 30})
-    assert blocked.status_code == 409
-    assert len(orders) == 1
+    assert blocked.status_code == 201
+    assert len(orders) == 2
 
     still_open = client.post("/donations/ORDER-1/release")
     assert still_open.json()["status"] == "created"
-    assert client.get("/campaigns/1/availability").json()["reserved"] == 80
+    assert client.get("/campaigns/1/availability").json()["reserved"] == 0
     order_status["ORDER-1"] = "VOIDED"
     released = client.post("/donations/ORDER-1/release")
     assert released.json()["status"] == "failed"
@@ -141,7 +141,7 @@ def test_capture_consumes_hold_and_paid_work_counts_toward_goal(client, monkeypa
     created = client.post("/campaigns/1/donations", json={"donor_name": "A", "amount": 60, "simulate": True})
     assert created.status_code == 201
     assert client.get("/campaigns/1/availability").json() == {
-        "goal": 100, "status": "active", "raised": 0, "reserved": 60, "remaining": 40}
+        "goal": 100, "status": "active", "raised": 0, "reserved": 0, "remaining": 100}
     captured = client.post(f"/donations/{created.json()['paypal_order_id']}/capture")
     assert captured.json()["status"] == "captured"
     assert client.get("/campaigns/1/availability").json()["remaining"] == 40

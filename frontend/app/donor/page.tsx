@@ -129,7 +129,7 @@ function DonorContent() {
                 {session.followed.includes(campaign.id) ? "Following" : "Supported"}
               </span>
               <h3 className="mt-3 text-2xl font-extrabold tracking-tight text-[#001435]">{campaign.title}</h3>
-              <p className="mt-2 text-xs leading-relaxed text-slate-600">{campaign.description}</p>
+              <p className="mt-2 text-xs leading-relaxed text-slate-600">{campaign.description}</p><p className="mt-2 text-xs">Beneficiary: {campaign.beneficiary || "See campaign details"}</p><p className="mt-1 text-xs">Expected delivery: {campaign.expected_deliverables || "See assigned budget lines"}</p>
               {campaign.cancelled_at && <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950">Campaign cancelled: {campaign.cancellation_reason}. Check the public ledger for refunds and disputes.</p>}
               <div className="mt-5 flex flex-wrap gap-4 text-xs font-bold text-[#003087]">
                 <Link href={`/campaigns/${campaign.id}#updates`} className="underline hover:text-[#0070BA]">
@@ -181,7 +181,7 @@ function DonorContent() {
                   <p className="mt-1 text-xs text-slate-500">
                     {new Date(receipt.created_at).toLocaleDateString()} &middot;{" "}
                     <span className="font-bold text-[#0070BA]">
-                      {receipt.mode === "simulated" ? "Simulated test donation" : "PayPal Sandbox capture"}
+                      {receipt.mode === "simulated" ? "Simulated test donation" : "PayPal Sandbox donation"}
                     </span>
                   </p>
                   <Link href={`/ledger/${receipt.campaign_id}`} className="mt-2 inline-block text-xs font-bold text-[#003087] underline hover:text-[#0070BA]">
@@ -192,7 +192,7 @@ function DonorContent() {
                   </p>)}
                 </div>
                 <div className="rounded-2xl border border-emerald-200/80 bg-emerald-50/80 px-4 py-2 text-right">
-                  <span className="block text-[10px] font-extrabold uppercase tracking-wider text-emerald-800">{paymentStatuses[receipt.paypal_order_id]?.unavailable_amount ? "Captured · adjusted" : "Captured"}</span>
+                  <span className="block text-[10px] font-extrabold uppercase tracking-wider text-emerald-800">{"Donated"}</span>
                   <strong className="text-lg font-black text-emerald-950 tabular-nums">{money(receipt.amount, receipt.currency)}</strong>
                 </div>
               </li>

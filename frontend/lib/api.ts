@@ -24,6 +24,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const isRead = !init?.method || init.method === "GET";
     response = await fetch(`${API_URL}${path}`, { ...init, credentials: "include", signal: init?.signal ?? AbortSignal.timeout(isRead ? 12000 : 180000) });
   } catch (cause) {
+    if (path === "/invoices" && init?.method === "POST") {
+      throw new Error(cause instanceof Error && cause.name === "TimeoutError"
+        ? "Invoice processing timed out. Refresh your invoice tracker before resubmitting to avoid a duplicate."
+        : `Could not upload paperwork to ${API_URL}. Make sure the backend is running, then refresh your invoice tracker before retrying.`);
+    }
     if (path === "/campaigns" || /^\/campaigns\/\d+$/.test(path)) {
       throw new Error("Live campaigns are unavailable. Donation checkout is paused until the campaign service is running. Please try again shortly.");
     }
@@ -53,6 +58,7 @@ export const api = {
   login: (email: string, password: string) => request<{ id: number; email: string; name: string; role: "organizer" | "vendor" | "verifier" }>("/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password }) }),
   registerAccount: (kind: "organizer" | "vendor" | "verifier", data: Record<string, string>) => request<{ id: number; email: string; name: string; role: "organizer" | "vendor" | "verifier" }>(`/auth/register-${kind}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) }),
   logout: () => request<{ signed_out: boolean }>("/auth/logout", { method: "POST" }),
+  campaignCreationLimit: () => request<{ limit: number; count: number; remaining: number }>("/auth/campaign-creation-limit"),
   myCampaigns: () => request<CampaignSummary[]>("/auth/my-campaigns"),
   myVendors: () => request<Array<{ id: number; campaign_id: number }>>("/auth/my-vendors"),
   myPendingInvites: () => request<Array<{
@@ -92,6 +98,7 @@ export const api = {
     return request<Invoice[]>(`/invoices${query.size ? `?${query}` : ""}`);
   },
   getInvoice: async (id: number): Promise<Invoice> => USE_MOCKS ? mockInvoices.find((invoice) => invoice.id === id)! : request<Invoice>(`/invoices/${id}`),
+  progress: (id: number) => request<import("./types").CampaignProgress>(`/campaigns/${id}/progress`),
   getLedger: async (campaignId: number): Promise<LedgerEntry[]> => USE_MOCKS ? mockLedger : request<LedgerEntry[]>(`/campaigns/${campaignId}/ledger`),
   askLedger: (campaignId: number, question: string): Promise<{ answer: string }> => USE_MOCKS
     ? Promise.reject(new Error("Ledger questions need the live API and Gemini."))
@@ -110,6 +117,10 @@ export const api = {
   uploadInvoice: (form: FormData): Promise<Invoice> => USE_MOCKS ? Promise.resolve(mockInvoices[0]) : request<Invoice>("/invoices", { method: "POST", body: form }),
   reportDelivery: (id: number, delivered_description: string, delivered_at: string): Promise<DeliveryCloseout> => request<DeliveryCloseout>(`/invoices/${id}/delivery`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ delivered_description, delivered_at }) }),
   acceptDelivery: (id: number, remaining_issue: string): Promise<DeliveryCloseout> => request<DeliveryCloseout>(`/invoices/${id}/delivery/accept`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ remaining_issue }) }),
+  reviewAction: (id: number, action: "request-evidence" | "escalate" | "reopen", note: string) => request<Invoice>(`/invoices/${id}/${action}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ note }) }),
+  amendments: (id: number) => request<import("./types").CampaignAmendment[]>(`/campaigns/${id}/amendments`),
+  proposeAmendment: (id: number, data: Record<string, unknown>) => request<import("./types").CampaignAmendment>(`/campaigns/${id}/amendments`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) }),
+  decideAmendment: (id: number, decision: "approve" | "reject", note: string) => request<import("./types").CampaignAmendment>(`/amendments/${id}/${decision}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ note }) }),
   approveInvoice: (id: number, data: VerificationRequest): Promise<Invoice> => USE_MOCKS ? Promise.resolve(mockInvoices[0]) : request<Invoice>(`/invoices/${id}/approve`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) }),
   rejectInvoice: (id: number, data: VerificationRequest): Promise<Invoice> => USE_MOCKS ? Promise.resolve(mockInvoices[0]) : request<Invoice>(`/invoices/${id}/reject`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) }),
   retryInvoice: (id: number, data: VerificationRequest): Promise<Invoice> => USE_MOCKS ? Promise.resolve(mockInvoices[0]) : request<Invoice>(`/invoices/${id}/retry`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) }),

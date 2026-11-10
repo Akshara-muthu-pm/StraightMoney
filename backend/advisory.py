@@ -59,14 +59,18 @@ def _fallback_ledger_answer(question: str, ledger: list[dict], currency: str) ->
     # 2. Donations / funding queries
     if {"donation", "donations", "donor", "donors", "raised", "contributed", "funded", "pool"} & words:
         total_donations = Decimal(0)
+        simulated_donations = Decimal(0)
         donor_names = []
         for entry in ledger:
-            if entry.get("type") == "donation" and entry.get("status") in {"captured", "success"}:
+            if entry.get("type") == "donation" and entry.get("status") in {"captured", "donated", "success"}:
+                if entry.get("source") == "simulated":
+                    simulated_donations += Decimal(str(entry.get("amount", 0)))
+                    continue
                 total_donations += Decimal(str(entry.get("amount", 0)))
                 name = str(entry.get("actor_name") or "Anonymous")
                 if name not in donor_names:
                     donor_names.append(name)
-        return f"A total of {currency} {total_donations:,.2f} has been contributed across {len(donor_names)} donor(s): {', '.join(donor_names) if donor_names else 'None'}."
+        return f"A total of {currency} {total_donations:,.2f} in confirmed PayPal Sandbox donations has been contributed across {len(donor_names)} anonymized contributor reference(s): {', '.join(donor_names) if donor_names else 'None'}. Simulated test donations, counted separately: {currency} {simulated_donations:,.2f}."
 
     # General ledger summary
     return f"This campaign ledger has {len(ledger)} recorded transactions. Please inspect the public transactions table above for complete details."

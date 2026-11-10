@@ -18,7 +18,7 @@ export function parseDemoState(raw: string): DemoState | null {
     const value = JSON.parse(raw) as DemoState;
     if (!value || !demoRoles.some((role) => role.name === value.role) || typeof value.name !== "string" || !Array.isArray(value.followed) || !value.followed.every(Number.isInteger) || !Array.isArray(value.receipts)) return null;
     if (!value.receipts.every((item) => item && typeof item.paypal_order_id === "string" && typeof item.amount === "number" && typeof item.campaign_title === "string" && typeof item.currency === "string" && typeof item.created_at === "string" && Number.isInteger(item.campaign_id) && ["simulated", "sandbox"].includes(item.mode))) return null;
-    return value;
+    return { ...value, receipts: value.receipts.filter((receipt) => receipt.status === "captured") };
   } catch { return null; }
 }
 export function toggleFollow(state: DemoState, id: number): DemoState {

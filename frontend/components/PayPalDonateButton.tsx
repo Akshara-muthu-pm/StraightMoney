@@ -95,8 +95,13 @@ export default function PayPalDonateButton({
         setOutcome({ kind: "uncertain", orderId, detail: "Payment status is not yet confirmed. You can check status below." });
       }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Confirmation failed. Check status below.");
-      setOutcome({ kind: "uncertain", orderId, detail: "We could not confirm the payment. Check status below." });
+      const status = await api.donationStatus(orderId).catch(() => null);
+      if (status?.status === "failed") {
+        setOutcome({ kind: "failed", detail: "The donation failed. No funds were added to this campaign." });
+      } else {
+        setError(cause instanceof Error ? cause.message : "Confirmation failed. Check status below.");
+        setOutcome({ kind: "uncertain", orderId, detail: "We could not confirm the payment. Check status below before retrying." });
+      }
     } finally {
       await refreshAvailability().catch(() => undefined);
       setCapturing(false);
@@ -121,7 +126,9 @@ export default function PayPalDonateButton({
       }
       window.location.assign(approvalUrl.toString());
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not start PayPal checkout.");
+      const detail = cause instanceof Error ? cause.message : "Could not start PayPal checkout.";
+      setError(detail);
+      setOutcome({ kind: "failed", detail });
       await refreshAvailability().catch(() => undefined);
       setCapturing(false);
     }
@@ -134,8 +141,8 @@ export default function PayPalDonateButton({
           : availability === null ? "Checking the remaining campaign amount…"
           : availability.status !== "active" ? "This campaign is not accepting donations."
           : availability.remaining <= 0 && availability.raised >= availability.goal ? "This campaign is fully funded and is no longer accepting donations."
-          : availability.remaining <= 0 ? `${currency} ${availability.reserved.toFixed(2)} is held in open checkouts. No donation capacity is available right now.`
-          : `${currency} ${availability.remaining.toFixed(2)} remains available${availability.reserved > 0 ? ` (${currency} ${availability.reserved.toFixed(2)} held in open checkouts)` : ""}.`}
+          : availability.remaining <= 0 ? "A payment is being confirmed. Check availability again shortly."
+          : `${currency} ${availability.remaining.toFixed(2)} remains available${availability.reserved > 0 ? " (a payment is being confirmed)" : ""}.`}
         {availability && availability.remaining <= 0 && availability.status === "active" && (
           <button type="button" className="ml-2 underline" onClick={() => void refreshAvailability().catch(() => undefined)}>
             Check availability
@@ -377,13 +384,13 @@ export default function PayPalDonateButton({
         >
           <h4 className="font-extrabold text-sm">
             {outcome.kind === "captured"
-              ? "Donation captured"
+              ? "Donated"
               : outcome.kind === "pending"
               ? "Payment pending"
               : outcome.kind === "failed"
-              ? "Payment failed"
+              ? "Failed"
               : outcome.kind === "cancelled"
-              ? "Checkout cancelled"
+              ? "Failed"
               : outcome.kind === "uncertain"
               ? "Status unconfirmed"
               : "Preview only"}
@@ -401,7 +408,7 @@ export default function PayPalDonateButton({
           </p>
           {outcome.kind === "captured" && outcome.refreshFailed && (
             <p className="mt-2 font-medium">
-              The payment is captured, but the displayed campaign totals could not refresh. Check the public ledger.
+              Your donation is confirmed, but the displayed campaign totals could not refresh. Check the public ledger.
             </p>
           )}
           {(outcome.kind === "pending" || outcome.kind === "uncertain") && (

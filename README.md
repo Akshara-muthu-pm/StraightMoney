@@ -141,7 +141,7 @@ Key environment variables in `.env`:
 - `PAYPAL_BASE_URL`: `https://api-m.sandbox.paypal.com`
 - `LLM_API_KEY`: Your Google Gemini API key.
 - `LLM_MODEL`: Primary model (e.g. `gemini-1.5-flash` or `gemini-3.8-flash`).
-- `VERIFIER_KEY`: Enrollment secret required to register a verifier account.
+- Verifier signup uses name, email and password in this sandbox prototype; no enrollment key is required.
 - `ADMIN_SETUP_KEY`: Setup secret to claim the seeded campaign.
 - `DATABASE_URL`: PostgreSQL connection string (defaults to `postgresql+psycopg://straightmoney:change-me@localhost:5432/straightmoney`).
 
@@ -235,7 +235,7 @@ Exercise actual PayPal Sandbox checkout and payout calls (requires valid Sandbox
    - In `/vendor`, select the assigned budget line, drag-and-drop an invoice PDF/image and proof photo, and click Submit.
    - Watch the live phased progress indicator as Gemini extracts invoice items and the policy engine runs.
 5. **Verifier Approval**:
-   - Register a **Verifier** account on `/signin` using the private `VERIFIER_KEY`.
+   - Register a **Verifier** account on `/signin` using a name, email address and password (no enrollment key required in this sandbox prototype).
    - Open `/verifier` to inspect the invoice, AI advisory notes, and policy results. Click **Approve Invoice**.
    - The backend schedules and executes a PayPal Payouts batch.
 6. **Auditing & Closeout**:
@@ -284,3 +284,44 @@ StraightMoney/
 ## License
 
 MIT License. See [`LICENSE`](LICENSE).
+
+## Organizer and vendor submission limits
+
+- Organizers may create up to 5 campaigns per account (all campaign statuses count). Set `MAX_CAMPAIGNS_PER_ORGANIZER` in the root `.env` to change the limit, then restart the backend. Existing campaigns are retained.
+- Fully paid budget lines and inactive campaigns stop accepting new invoices. Funding the campaign does not block legitimate vendor invoices; vendors still need to be paid. Delivery closeout remains available after payment. Existing donation goal caps continue to prevent overfunding.
+- Missing fields, invalid uploads, extraction errors and rejected policy checks display reasons in the vendor form or invoice tracker.
+
+## Donor ledger display
+
+The public ledger and CSV include only completed donations, labelled `donated`. Created, pending and failed checkout attempts remain private payment records and do not appear as contributions. Donor history and checkout display `Donated` or `Failed` for confirmed outcomes. Pending or unreachable PayPal confirmations retain a status-check message to prevent accidental duplicate payments. Refunds and disputes stay visible as separate ledger entries. Failed donations never credit the pool or reserve capacity for future transactions; successful captures remain idempotent.
+
+## V5: no capacity holds for unpaid checkout pages
+
+Starting or abandoning an unpaid checkout no longer reduces campaign availability. Existing unpaid checkout holds are ignored. The goal is rechecked under a campaign lock immediately before a payment capture attempt; a short capture claim prevents simultaneous payments from overfunding the goal. Confirmed failed payments release that claim. Genuine PayPal pending/uncertain capture attempts remain protected until their result is known; they are not treated as failed payments.
+
+To reset local Sandbox donations for Stationary and Sports, stop the backend and run `python scripts/reset_campaign_donations.py` from backend to list IDs. Then run `python scripts/reset_campaign_donations.py --campaign-ids ID1 ID2 --apply` with the actual IDs. This creates a JSON backup before removing only the selected campaigns' donation records and adjustments and zeroing their pools. It preserves campaign/vendor setup, refuses paid or pending vendor payouts, and does not refund PayPal transactions. Sign out/back in to clear old browser-session receipts.
+
+## V6: independent review and explainable screening
+
+- Verifiers may approve, request more evidence, reject with a reason, or escalate an awaiting claim. Escalations block payment; any independent verifier can record an investigation outcome and return the claim to review, or request evidence. Final verifier rejection is not reopened through this flow; appeals are a future feature.
+- Approval requires a recipient-confirmation checkbox and a method/reference. This records the verifier's attestation, not an authenticated response from a separate beneficiary account. Existing keyless sandbox verifier signup is unchanged.
+- Vendors can correct MORE_EVIDENCE_REQUIRED, policy REJECTED or extraction NEEDS_REVIEW claims using the same invoice ID. Full corrected invoice and proof are required. Earlier files, extracted data, policy results and correction notes remain in revision history. Verifier rejections and escalations cannot be bypassed through vendor resubmission.
+- Shared screening report separates extracted document facts, deterministic policy results, uncertain AI observations, and next human actions. AI observations do not authorize payout.
+- Campaign creation records beneficiary and expected deliverables. Existing campaigns show these as unspecified until an amendment is approved. Organizer amendments cover target, beneficiary, deliverables and reassignment to existing campaign vendors, with reason, independent approval/rejection, before/after history and a public amendment view. Reassignment is blocked after a line has invoice submissions. Targets cannot be reduced below received or actively processing funding.
+- PostgreSQL additive migration 007 adds campaign fields; ORM initialization creates invoice_revisions and campaign_amendments tables. No data reset is required.
+
+## V7: financial truth, public privacy and review depth
+
+Public ledger has distinct Financial records and Fulfillment progress views. Financial totals separate confirmed PayPal Sandbox donations from simulated test contributions, confirmed vendor payouts, and negative refund/dispute adjustments. Public progress uses a restricted endpoint with no payout emails, provider IDs or private verifier notes. Funding, evidence submission, review, approval and confirmed vendor payment are separate checkpoints.
+
+Public donation/adjustment rows use stable per-contribution aliases and hashed application references. CSV adds record_group, public_reference and payment_source columns and no longer links raw invoices containing payout emails. Original donor/payment records remain available to authorized operational workflows; aliases are not proof that contributions came from distinct people. Evidence images can still contain user-supplied information; this change does not automatically redact photo content.
+
+The demo uses payment after delivery with trusted vendors. Installments are post-approval allocation of available funds, not pre-delivery milestone advances. No real escrow or new PayPal partner disbursement integration is claimed. Only the exact legacy AeroDrone seed description is corrected on startup; custom descriptions and monetary data remain unchanged.
+
+Rule-based review guidance classifies claims as standard confirmation, detailed review, or correction/rejection review. Standard requires extracted data, required files, passed policy rules and available advisory findings with no recorded flags. Escalations, incomplete screening, advisory problems and failed checks receive deeper review. Guidance is not an authenticity score and never authorizes payment: independent recipient confirmation remains mandatory.
+
+## V8: vendor payment badges and fully allocated campaigns
+
+Vendor/organizer budget-line badges now distinguish approved-awaiting-payment, pending PayPal confirmation, partial payment, failed payment, evidence requests, escalation, simulation and confirmed Payment successful. Review is reserved for actual unreviewed submissions. Workspace polls saved review/payment status every 10 seconds while visible and refreshes when the tab is reactivated; it does not trigger new payouts. Existing webhook/status-reconciliation paths still establish payment completion. Approval alone never establishes that vendor funds arrived.
+
+New campaign creation requires at least one vendor-assigned budget line and exact equality of goal and total budget allocations, using Decimal cents on the API. Under/over allocation, missing vendor identity and unused vendor records are rejected without saving the campaign. The form shows unallocated/excess amounts and disables publishing until balanced. This validation applies to new campaigns; existing campaigns are retained.

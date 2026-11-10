@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     upload_dir: str = "./uploads"
     max_upload_bytes: int = Field(default=10 * 1024 * 1024, gt=0, le=25 * 1024 * 1024)
     max_pdf_pages: int = Field(default=20, gt=0, le=100)
+    max_campaigns_per_organizer: int = Field(default=5, gt=0)
     write_rate_limit: int = Field(default=30, gt=0)
     frontend_url: str = "http://localhost:3000"
 

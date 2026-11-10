@@ -9,7 +9,7 @@ from typing import Annotated, Any, Optional
 from decimal import Decimal
 import re
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, PlainSerializer, StringConstraints, field_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, PlainSerializer, StringConstraints, field_validator, model_validator
 
 from config import settings
 
@@ -98,6 +98,8 @@ class BudgetLineOut(BaseModel):
 class CampaignCreate(BaseModel):
     """Full campaign creation payload including nested vendors and budget lines."""
 
+    beneficiary: Optional[str] = Field(default=None, max_length=2000)
+    expected_deliverables: Optional[str] = Field(default=None, max_length=5000)
     title: Name
     description: Optional[str] = Field(default=None, max_length=10000)
     goal_amount: Money
@@ -105,6 +107,19 @@ class CampaignCreate(BaseModel):
     organizer_name: Name
     vendors: list[VendorCreate] = Field(default_factory=list, max_length=100)
     budget_lines: list[BudgetLineCreate] = Field(default_factory=list, max_length=100)
+
+    @model_validator(mode="after")
+    def require_fully_allocated_goal(self):
+        if not self.budget_lines:
+            raise ValueError("Add at least one vendor budget line and allocate the entire campaign goal.")
+        total = sum((Decimal(str(line.budgeted_amount)) for line in self.budget_lines), Decimal("0"))
+        if total != Decimal(str(self.goal_amount)):
+            raise ValueError(f"Budget lines total USD {total:.2f}; campaign goal is USD {self.goal_amount:.2f}. Allocate the entire goal exactly before creating the campaign.")
+        for line in self.budget_lines:
+            if line.vendor_id is None and not (line.vendor_name and line.vendor_payout_email):
+                raise ValueError(f"Assign a vendor name and payout email to budget line '{line.name}'.")
+        return self
+
 
 
 class CampaignCancellation(BaseModel):
@@ -117,6 +132,8 @@ class CampaignOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    beneficiary: Optional[str] = None
+    expected_deliverables: Optional[str] = None
     title: str
     description: Optional[str]
     goal_amount: float
@@ -232,6 +249,8 @@ class VerificationCreate(BaseModel):
 
     verifier_name: Name
     note: Optional[str] = Field(default=None, max_length=5000)
+    recipient_confirmed: bool = False
+    confirmation_reference: Optional[str] = Field(default=None, max_length=2000)
 
 
 class VerificationOut(BaseModel):
@@ -326,6 +345,12 @@ class InvoiceDetail(InvoiceOut):
 
     model_config = ConfigDict(from_attributes=True)
 
+    review_guidance: dict = {}
+    payment_model: str = "payment_after_delivery"
+    payment_mode: str = "paypal"
+    screening_facts: dict = {}
+    revisions: list[dict] = []
+    campaign_requirements: dict = {}
     checks: list[CheckOut] = []
     verifications: list[VerificationOut] = []
     payout: Optional[PayoutOut] = None
@@ -348,6 +373,7 @@ class LedgerEntry(BaseModel):
     created_at: UTCDateTime
     proof_url: Optional[str] = None
     detail: Optional[str] = None
+    public_reference: Optional[str] = None
     donation_id: Optional[int] = None
     invoice_id: Optional[int] = None
 
@@ -389,3 +415,14 @@ class AdvisoryResult(BaseModel):
 
     flags: list[str]
     summary: str
+
+
+class ReviewNote(BaseModel):
+    note: Annotated[str, StringConstraints(strip_whitespace=True, min_length=5, max_length=5000)]
+
+
+class AmendmentCreate(ReviewNote):
+    goal_amount: Optional[Money] = None
+    beneficiary: Optional[str] = Field(default=None, max_length=2000)
+    expected_deliverables: Optional[str] = Field(default=None, max_length=5000)
+    vendor_assignments: dict[int, int] = Field(default_factory=dict, max_length=100)

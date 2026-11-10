@@ -27,7 +27,7 @@ export const mockCampaign: Campaign = {
 export const mockStartupCampaign: Campaign = {
   id: 2,
   title: "AeroDrone Ag - Autonomous Precision Drone",
-  description: "Hardware venture building autonomous precision spraying drones for sustainable agriculture. Capital is held in PayPal Sandbox escrow. Funds disburse in tranches only after airframe dimensional test reports and motor bench test photos pass AI and human verification.",
+  description: "Hardware venture building autonomous precision spraying drones for sustainable agriculture. Sandbox demo of payment after delivery, not real escrow. Supplier payments are authorized only after airframe dimensional test reports and motor bench test photos pass AI and human verification.",
   goal_amount: 12500,
   currency: "USD",
   pool_balance: 0,

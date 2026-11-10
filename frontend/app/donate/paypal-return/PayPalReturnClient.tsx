@@ -32,7 +32,10 @@ export default function PayPalReturnClient({ token, cancelled, campaignId }: { t
         setResult({ kind: "failed", message: "PayPal did not complete this payment. No funds were added to the campaign." });
       }
     } catch (cause) {
-      setResult({ kind: "uncertain", message: cause instanceof Error ? cause.message : "Payment status could not be confirmed. Check again before starting another donation." });
+      const status = await api.donationStatus(id).catch(() => null);
+      setResult(status?.status === "failed"
+        ? { kind: "failed", message: "The donation failed. No funds were added to the campaign." }
+        : { kind: "uncertain", message: cause instanceof Error ? cause.message : "Payment status could not be confirmed. Check again before starting another donation." });
     }
   }, []);
 
@@ -69,14 +72,14 @@ export default function PayPalReturnClient({ token, cancelled, campaignId }: { t
         </span>
         <p className="eyebrow mt-6">PayPal Sandbox</p>
         <h1 className="display-heading mt-3 text-3xl sm:text-4xl">
-          {result.kind === "checking" ? "Confirming your payment" : result.kind === "captured" ? "Donation confirmed" : result.kind === "cancelled" ? "Checkout cancelled" : result.kind === "pending" ? "Payment pending" : result.kind === "failed" ? "Payment not completed" : "Status unconfirmed"}
+          {result.kind === "checking" ? "Confirming your payment" : result.kind === "captured" ? "Donated" : result.kind === "cancelled" ? "Failed" : result.kind === "pending" ? "Payment pending" : result.kind === "failed" ? "Failed" : "Status unconfirmed"}
         </h1>
         <p className="mx-auto mt-5 max-w-lg text-sm leading-relaxed text-slate-600 sm:text-base">
           {result.kind === "checking" && "We are checking your PayPal order and campaign balance."}
-          {result.kind === "captured" && `${result.donation.currency} ${result.donation.amount.toFixed(2)} was captured and added to the campaign.`}
+          {result.kind === "captured" && `${result.donation.currency} ${result.donation.amount.toFixed(2)} was donated and added to the campaign.`}
           {result.kind === "cancelled" && (result.released
-            ? "No donation was captured. The checkout hold has been released."
-            : "No donation was captured. The checkout hold remains until PayPal confirms cancellation or it expires.")}
+            ? "No donation was completed. The checkout hold has been released."
+            : "No donation was completed. The checkout hold remains until PayPal confirms cancellation or it expires.")}
           {result.kind === "pending" && "PayPal has not completed this payment. No funds have been added yet. Check its status before making another donation."}
           {(result.kind === "failed" || result.kind === "uncertain") && result.message}
         </p>

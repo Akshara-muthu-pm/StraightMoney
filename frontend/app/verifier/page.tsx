@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import DashboardShell from "@/components/DashboardShell";
+import AmendmentPanel from "@/components/AmendmentPanel";
 import InvoiceStages from "@/components/InvoiceStages";
 import { invoiceStages } from "@/lib/presentation";
 import VerifierReview from "@/components/VerifierReview";
@@ -15,6 +16,7 @@ function VerifierQueue() {
   const [issues, setIssues] = useState<Array<{ id: number; detail: string; reference: string | null }>>([]);
   const [campaigns, setCampaigns] = useState<CampaignSummary[]>([]);
   const [campaignId, setCampaignId] = useState<number | null>(null);
+  const [depth, setDepth] = useState("");
   const [status, setStatus] = useState("AWAITING_VERIFIER");
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -43,6 +45,7 @@ function VerifierQueue() {
     let active = true;
     api.getInvoices(campaignId, status || undefined).then((items) => {
       if (!active) return;
+      items = depth ? items.filter((item)=>item.review_guidance?.depth === depth) : items;
       setInvoices(items);
       setInvoice(null);
       setSelectedId(items[0]?.id ?? null);
@@ -53,7 +56,7 @@ function VerifierQueue() {
       if (active) setError(cause instanceof Error ? cause.message : "Could not load invoices.");
     }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [campaignId, status, refreshKey]);
+  }, [campaignId, status, depth, refreshKey]);
 
   useEffect(() => {
     if (selectedId === null) return;
@@ -81,6 +84,8 @@ function VerifierQueue() {
     <div className="mb-6 flex flex-wrap gap-2.5">
       {[
         ["AWAITING_VERIFIER", "Pending review"],
+        ["MORE_EVIDENCE_REQUIRED", "Waiting for evidence"],
+        ["ESCALATED", "Escalated claims"],
         ["PAYOUT_PENDING", "Payment confirmations"],
         ["AWAITING_FUNDS", "Awaiting funds"],
         ["", "All invoices"]
@@ -109,6 +114,7 @@ function VerifierQueue() {
           ))}
         </select>
       </label>
+      <label className="flex items-center">Review depth<select value={depth} onChange={(e)=>{setLoading(true);setDepth(e.target.value);}} className="ml-2 rounded-xl border border-slate-300 bg-white p-2 text-slate-950 dark:bg-slate-900 dark:text-white"><option value="">All review depths</option><option value="standard">Standard confirmation</option><option value="detailed">Detailed review</option><option value="blocked">Correction / rejection review</option></select></label>
       <label className="flex items-center">
         Status
         <select
@@ -124,10 +130,11 @@ function VerifierQueue() {
           <option value="PAYOUT_PENDING">Payout pending</option>
           <option value="REJECTED">Rejected</option>
           <option value="PAID">Paid</option>
-          <option value="NEEDS_REVIEW">Needs review</option>
+          <option value="NEEDS_REVIEW">Extraction needs review</option><option value="MORE_EVIDENCE_REQUIRED">More evidence required</option><option value="ESCALATED">Escalated</option><option value="VERIFIER_REJECTED">Verifier rejected</option>
         </select>
       </label>
     </div>
+    {campaignId !== null && <AmendmentPanel campaignId={campaignId} mode="verifier" />}
     {loading && <p role="status" className="text-xs text-slate-500">Loading invoices…</p>}
     {error && (
       <div role="alert" className="mb-5 rounded-2xl border border-red-200 bg-red-50 p-5 text-xs text-red-900">

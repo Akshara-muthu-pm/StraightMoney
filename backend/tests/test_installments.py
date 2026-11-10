@@ -148,7 +148,7 @@ async def test_verifier_request_returns_when_paypal_stalls(monkeypatch):
     db.commit()
     monkeypatch.setattr(main, "pay_available", stalled_payment)
     monkeypatch.setattr(main, "_PAYOUT_WAIT_SECONDS", 0.01)
-    result = await main.approve_invoice(invoice.id, VerificationCreate(verifier_name="Reviewer"), db)
+    result = await main.approve_invoice(invoice.id, VerificationCreate(verifier_name="Reviewer", recipient_confirmed=True, confirmation_reference="Recipient confirmed complete delivery in test"), db)
     assert result.status == "AWAITING_FUNDS"
     assert db.query(AuditLog).filter_by(invoice_id=invoice.id, action="payout.response_timeout").count() == 1
     assert invoice.installments == []
