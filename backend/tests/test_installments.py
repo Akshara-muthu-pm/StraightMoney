@@ -193,3 +193,57 @@ async def test_restricted_sender_fails_without_deducting_pool():
     assert "sandbox sender account's country" in invoice.ai_summary
     assert "debug_id" not in invoice.ai_summary
     db.close()
+
+
+@pytest.mark.asyncio
+async def test_payout_worker_confirms_pending_transfer_without_resending(monkeypatch):
+    import asyncio
+    import main
+
+    db, campaign, line, invoice = setup_invoice()
+    invoice_id = invoice.id
+    db.add(PayoutInstallment(invoice_id=invoice_id, amount=200, currency="USD",
+                             sender_batch_id="original-key", paypal_batch_id="original-batch"))
+    invoice.status = "PAYOUT_PENDING"
+    db.commit()
+    paypal = FakePayPal()
+
+    passes = 0
+
+    async def one_pass(_seconds):
+        nonlocal passes
+        passes += 1
+        if passes > 1:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(main, "SessionLocal", lambda: Session(db.bind))
+    monkeypatch.setattr(main, "paypal", paypal)
+    monkeypatch.setattr(main.asyncio, "sleep", one_pass)
+    db.expire_all()
+
+    with pytest.raises(asyncio.CancelledError):
+        await main._reconcile_payout_queue()
+
+    db.refresh(invoice)
+    assert invoice.paid_amount == 200
+    assert invoice.status == "PARTIALLY_PAID"
+    assert paypal.sent == []
+    db.close()
+
+
+@pytest.mark.asyncio
+async def test_missing_paypal_credentials_do_not_reserve_campaign_funds(monkeypatch):
+    from payments import PayPalClient
+
+    db, campaign, line, invoice = setup_invoice()
+    paypal = PayPalClient()
+    monkeypatch.setattr(paypal, "_client_id", "")
+    await pay_available(db, invoice, paypal)
+
+    assert invoice.status == "FAILED"
+    assert invoice.installments[0].status == "failed"
+    assert invoice.paid_amount == 0
+    assert campaign.pool_balance == 200
+    assert line.paid_amount == 0
+    assert "Configure PayPal Sandbox credentials" in invoice.ai_summary
+    db.close()

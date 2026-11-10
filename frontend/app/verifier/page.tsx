@@ -78,29 +78,9 @@ function VerifierQueue() {
       <section role="status" className="liquid-glass mb-6 p-6">
         <h2 className="mb-4 text-base font-extrabold text-[#001435]">Decision recorded: {lastOutcome.invoice_number}</h2>
         <InvoiceStages invoice={lastOutcome} />
-        <p className="mt-3 text-xs text-slate-500">This is the last recorded outcome. Use the payment queue to check for later PayPal confirmation.</p>
+        <p className="mt-3 text-xs text-slate-500">This is the last recorded outcome. Use the Status filter to find payouts awaiting PayPal confirmation.</p>
       </section>
     )}
-    <div className="mb-6 flex flex-wrap gap-2.5">
-      {[
-        ["AWAITING_VERIFIER", "Pending review"],
-        ["MORE_EVIDENCE_REQUIRED", "Waiting for evidence"],
-        ["ESCALATED", "Escalated claims"],
-        ["PAYOUT_PENDING", "Payment confirmations"],
-        ["AWAITING_FUNDS", "Awaiting funds"],
-        ["", "All invoices"]
-      ].map(([value, label]) => (
-        <button
-          type="button"
-          key={value}
-          aria-pressed={status === value}
-          onClick={() => { if (status === value) return; setLoading(true); setStatus(value); }}
-          className={status === value ? "button-primary text-xs" : "button-secondary text-xs"}
-        >
-          {label}
-        </button>
-      ))}
-    </div>
     <div className="mb-6 flex flex-wrap items-center gap-4 text-xs font-extrabold uppercase tracking-wider text-slate-500">
       <label className="flex items-center">
         Campaign

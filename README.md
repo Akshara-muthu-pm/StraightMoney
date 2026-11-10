@@ -137,7 +137,7 @@ Copy-Item frontend/.env.example frontend/.env.local
 ```
 
 Key environment variables in `.env`:
-- `PAYPAL_CLIENT_ID` & `PAYPAL_CLIENT_SECRET`: Your PayPal Sandbox credentials.
+- `PAYPAL_CLIENT_ID` & `PAYPAL_CLIENT_SECRET`: Required for PayPal Sandbox checkout and vendor transfers. You can leave these blank to run the app locally and review the non-payment flows. The automated payout tests use PayPal test doubles.
 - `PAYPAL_BASE_URL`: `https://api-m.sandbox.paypal.com`
 - `LLM_API_KEY`: Your Google Gemini API key.
 - `LLM_MODEL`: Primary model (e.g. `gemini-1.5-flash` or `gemini-3.8-flash`).
@@ -287,7 +287,7 @@ MIT License. See [`LICENSE`](LICENSE).
 
 ## Organizer and vendor submission limits
 
-- Organizers may create up to 5 campaigns per account (all campaign statuses count). Set `MAX_CAMPAIGNS_PER_ORGANIZER` in the root `.env` to change the limit, then restart the backend. Existing campaigns are retained.
+- Organizer campaign creation is unlimited by default. Set `MAX_CAMPAIGNS_PER_ORGANIZER` to a positive value in the root `.env` to apply a per-account cap across all campaign statuses.
 - Fully paid budget lines and inactive campaigns stop accepting new invoices. Funding the campaign does not block legitimate vendor invoices; vendors still need to be paid. Delivery closeout remains available after payment. Existing donation goal caps continue to prevent overfunding.
 - Missing fields, invalid uploads, extraction errors and rejected policy checks display reasons in the vendor form or invoice tracker.
 

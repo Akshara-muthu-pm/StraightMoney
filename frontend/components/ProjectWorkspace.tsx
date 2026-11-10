@@ -47,7 +47,7 @@ function WorkspaceContent({ role }: { role: "Organizer" | "Vendor" }) {
   const [error, setError] = useState("");
   const [syncError, setSyncError] = useState("");
   const [revision, setRevision] = useState(0);
-  const [creationLimit, setCreationLimit] = useState<{ limit: number; count: number; remaining: number } | null>(null);
+  const [creationLimit, setCreationLimit] = useState<{ limit: number | null; count: number; remaining: number | null } | null>(null);
   useEffect(() => {
     if (role === "Organizer") api.campaignCreationLimit().then(setCreationLimit).catch(() => setCreationLimit(null));
   }, [role, revision]);
@@ -264,7 +264,7 @@ function WorkspaceContent({ role }: { role: "Organizer" | "Vendor" }) {
         )}
       </div>
     </div>
-    {role === "Organizer" && creationLimit && <p role="status" className="mb-4 text-sm text-slate-700 dark:text-slate-200">
+    {role === "Organizer" && creationLimit && creationLimit.limit !== null && <p role="status" className="mb-4 text-sm text-slate-700 dark:text-slate-200">
       {creationLimit.count} / {creationLimit.limit} campaigns created. {creationLimit.remaining === 0 ? "Campaign creation limit reached." : `${creationLimit.remaining} remaining.`}
     </p>}
     {syncError && <p role="status" className="mb-4 rounded-xl border border-amber-300 p-3 text-sm">{syncError}</p>}
@@ -272,7 +272,7 @@ function WorkspaceContent({ role }: { role: "Organizer" | "Vendor" }) {
     {notice && <p role="status" className="mb-5 rounded-2xl border border-blue-200/80 bg-blue-50/80 p-4 text-xs font-bold text-[#003087] backdrop-blur-md">{notice}</p>}
     {error && <p role="alert" className="mb-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-xs font-bold text-red-900">{error}</p>}
     {loading && <p role="status" className="text-xs text-slate-500">Loading project work...</p>}
-    {role === "Organizer" && creating && creationLimit && creationLimit.remaining > 0 ? (
+    {role === "Organizer" && creating && creationLimit && creationLimit.remaining !== 0 ? (
       <section id="create-campaign">
         <OrganizerForm
           campaign={campaign ?? undefined}
