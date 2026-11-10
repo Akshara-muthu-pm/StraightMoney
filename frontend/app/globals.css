@@ -83,6 +83,13 @@ body {
   overflow-x: hidden;
 }
 
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+}
+
 /* =========================================================================
    LIQUID GLASS SYSTEM (Fluid Caustics, Specular Edges & Frosted Refraction)
    ========================================================================= */

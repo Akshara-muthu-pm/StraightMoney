@@ -23,6 +23,7 @@ export default function SignInPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [enrollmentKey, setEnrollmentKey] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
@@ -34,7 +35,10 @@ export default function SignInPage() {
     try {
       const account = authTab === "login"
         ? await api.login(email, password)
-        : await api.registerAccount(activeRole, { name, email, password });
+        : await api.registerAccount(activeRole, {
+            name, email, password,
+            ...(activeRole === "verifier" ? { enrollment_key: enrollmentKey } : {}),
+          });
       signOutDemo();
       setAccount(account);
       router.push(`/${account.role}`);
@@ -85,6 +89,9 @@ export default function SignInPage() {
                 <button type="button" onClick={() => setShowPassword((value) => !value)} aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? "Hide" : "Show"}</button>
               </span>
             </label>
+            {authTab === "register" && activeRole === "verifier" && <label htmlFor="verifier-enrollment-key">Verifier enrollment key
+              <input id="verifier-enrollment-key" required type="password" value={enrollmentKey} onChange={(event) => setEnrollmentKey(event.target.value)} autoComplete="off" maxLength={200} />
+            </label>}
             {error && <p className={styles.error} role="alert">{error}</p>}
             <button type="submit" disabled={pending} className={styles.submit}>{pending ? "Please wait…" : authTab === "login" ? "Sign in" : "Create account"}</button>
           </form>

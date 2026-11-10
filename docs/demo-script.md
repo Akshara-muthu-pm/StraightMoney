@@ -1,6 +1,6 @@
 # StraightMoney demo script
 
-Use only fake sample files and PayPal Sandbox accounts. The seeded campaign is **School Library Corner** with **Shelves $400 / Vendor A / vendor-a@example.com**, **Books $600 / Vendor B / vendor-b@example.com**, and **Paint $200 / Vendor C / vendor-c@example.com**. The vendor selector is for the demo; it is not user authentication.
+Use only fake sample files and PayPal Sandbox accounts. The seeded campaign is **School Library Corner** with **Shelves $400 / Vendor A / vendor-a@example.com**, **Books $600 / Vendor B / vendor-b@example.com**, and **Paint $200 / Vendor C / vendor-c@example.com**. Vendor access requires an account linked to the assigned vendor record.
 
 ## Pre-demo reset checklist
 
@@ -15,11 +15,11 @@ docker compose up -d
 2. In `frontend/.env.local`, set the matching `NEXT_PUBLIC_PAYPAL_CLIENT_ID`, `NEXT_PUBLIC_USE_MOCKS=false`, and `NEXT_PUBLIC_ALLOW_SIMULATED_DONATIONS=false`. Keep `NEXT_PUBLIC_API_URL=http://localhost:8000`. Restart both servers after changing flags.
 3. Confirm the Sandbox business account can send Payouts and that three Sandbox buyer checkouts can complete. A payout is **paid** only after PayPal confirms success; a restricted sender may leave it failed or pending.
 4. Start the API from `backend`: `uvicorn main:app --reload --port 8000`. Start the frontend from `frontend`: `npm run dev`. Open `http://localhost:3000` and check `http://localhost:8000/health`.
-5. Confirm the campaign shows a $1,200 goal and $0 available before donations. Open `/verifier`, enter `VERIFIER_KEY` once for the browser tab, and check the pending queue is empty. Keep the sample file table in [`../sample_invoices/README.md`](../sample_invoices/README.md) beside you.
+5. Confirm the campaign shows a $1,200 goal and $0 available before donations. Create a verifier account at `/signin` using `VERIFIER_KEY`, then open `/verifier` and check the pending queue is empty. Keep the sample file table in [`../sample_invoices/README.md`](../sample_invoices/README.md) beside you.
 
 ## Click-by-click scenario run
 
-For each invoice: use the demo sign-in to choose **Vendor**, open `/vendor`, select **School Library Corner** and the listed budget line, enter the invoice number exactly, upload the PDF and proof JPG, then press **Submit invoice**. Use **Verifier** sign-in and `/verifier` to inspect checks and decisions. Check each result in the final column during the rehearsal.
+For each invoice: sign in as the invited **Vendor**, open `/vendor`, select **School Library Corner** and the assigned budget line, enter the invoice number exactly, upload the PDF and proof JPG, then press **Submit invoice**. Sign in as an enrolled **Verifier** and use `/verifier` to inspect checks and decisions. Check each result in the final column during the rehearsal.
 
 | # | Clicks and files | Expected result | Pass / fail |
 | --- | --- | --- | --- |

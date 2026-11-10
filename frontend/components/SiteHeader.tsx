@@ -7,6 +7,7 @@ import { useDemoSession, signOutDemo } from "@/lib/demo-session";
 import { useAccount, signOutAccount } from "@/lib/account-session";
 import { demoRoles } from "@/lib/demo-state";
 import { useTheme } from "@/components/ThemeProvider";
+import StraightMoneyLogo from "@/components/StraightMoneyLogo";
 
 const emptySubscribe = () => () => {};
 
@@ -18,7 +19,7 @@ function useIsMounted() {
   );
 }
 
-export default function Header() {
+export default function SiteHeader() {
   const pathname = usePathname();
   const router = useRouter();
   const session = useDemoSession();
@@ -32,25 +33,12 @@ export default function Header() {
     <header className="site-header">
       <div className="page-width flex flex-wrap items-center justify-between gap-4 py-3.5">
         <Link href="/" className="flex items-center gap-3 text-lg font-bold tracking-tight group" aria-label="StraightMoney home">
-          <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#003087] p-2" aria-hidden="true">
-            <svg width="24" height="24" viewBox="0 0 32 32" fill="none" className="-rotate-6 transform drop-shadow-sm">
-              {/* Back P (Deep Navy) */}
-              <path
-                d="M7 4h10.5c3.6 0 6.2 2.2 5.6 5.8-.8 4.8-4.2 6.4-7.8 6.4h-3.6L9.5 28H5.2L7 4z"
-                fill="#001C64"
-              />
-              {/* Front P (Cyan & Active Blue) */}
-              <path
-                d="M11.5 7.5H22c3.6 0 6.2 2.2 5.6 5.8-.8 4.8-4.2 6.4-7.8 6.4h-3.6L14 31.5H9.7l2.8-24z"
-                fill="#009CDE"
-              />
-              {/* Overlapping intersection */}
-              <path
-                d="M11.5 7.5h6.2c3.6 0 6.2 2.2 5.6 5.8-.3 1.8-1 3.2-2.1 4.2-.8-1.5-2.2-2.2-4.2-2.2h-3.6l-1.1 5.9H9.7l1.8-13.7z"
-                fill="#00457C"
-                opacity="0.9"
-              />
-            </svg>
+          <span
+            suppressHydrationWarning
+            className="flex h-10 w-10 items-center justify-center transition-transform duration-200 group-hover:scale-105"
+            aria-hidden="true"
+          >
+            <StraightMoneyLogo size={40} variant="badge" idPrefix="header-logo" />
           </span>
           <span className="flex items-baseline gap-2">
             <span className="text-xl font-extrabold tracking-tight text-[#001435]">

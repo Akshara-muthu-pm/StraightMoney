@@ -1,14 +1,12 @@
 "use client";
 
-import { useMemo, useState, lazy, Suspense } from "react";
+import { useMemo, useState } from "react";
 import { compareLedgerDate, publicLedgerEntries } from "@/lib/ledger-filters";
 import type { ColDef } from "ag-grid-community";
 import type { LedgerEntry } from "@/lib/types";
 import { api, USE_MOCKS } from "@/lib/api";
 import { useTheme } from "@/components/ThemeProvider";
-
-// Keep the interactive grid in a separate chunk.
-const AgGridPanel = lazy(() => import("./LedgerAgGrid"));
+import LedgerAgGrid from "./LedgerAgGrid";
 
 export default function LedgerGrid({ campaignId, entries }: { campaignId: number; entries: LedgerEntry[] }) {
   const { isDark } = useTheme();
@@ -138,13 +136,7 @@ export default function LedgerGrid({ campaignId, entries }: { campaignId: number
     {(
       // Keep the grid mounted so filtering and sorting survive view changes.
       <div style={{ display: simpleView ? "none" : undefined }}>
-          <Suspense fallback={
-            <div className="flex h-[430px] items-center justify-center rounded-2xl border border-slate-200 bg-white shadow-sm">
-              <p className="text-sm text-slate-500">Loading interactive grid…</p>
-            </div>
-          }>
-            <AgGridPanel filtered={filtered} columns={columns} isDark={isDark} />
-          </Suspense>
+        <LedgerAgGrid filtered={filtered} columns={columns} isDark={isDark} />
       </div>
     )}
     <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-[#001c48]" aria-labelledby="ledger-ask-title">

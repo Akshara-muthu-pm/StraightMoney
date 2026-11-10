@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import localFont from "next/font/local";
-import Header from "@/components/Header";
+import SiteHeader from "@/components/SiteHeader";
+import StraightMoneyLogo from "@/components/StraightMoneyLogo";
 import SiteMotion from "@/components/SiteMotion";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import Link from "next/link";
@@ -10,34 +11,19 @@ const jakarta = localFont({
   src: "./fonts/PlusJakartaSans.ttf",
   variable: "--font-jakarta",
   weight: "200 800",
-  // "optional" tells the browser to use a system font on first load
-  // rather than causing a layout shift when the custom font arrives.
-  display: "optional",
+  display: "swap",
 });
 
 export const metadata: Metadata = {
   title: "StraightMoney · Transparent Community Fundraising (PayPal AI Hackathon)",
   description:
     "Community fundraising where the organizer never holds the money. Secured by PayPal Orders v2, PayPal Payouts, and Gemini AI verification.",
-  icons: {
-    icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23001435'/><path d='M7 5h10.5c3.6 0 6.2 2.2 5.6 5.8-.8 4.8-4.2 6.4-7.8 6.4h-3.6L9.5 29H5.2L7 5z' fill='%23003087'/><path d='M11.5 8.5H22c3.6 0 6.2 2.2 5.6 5.8-.8 4.8-4.2 6.4-7.8 6.4h-3.6L14 32.5H9.7l2.8-24z' fill='%23009CDE'/></svg>",
-  },
+  manifest: "/manifest.json",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" data-theme="light" suppressHydrationWarning className={jakarta.variable}>
-      <head>
-        <link
-          rel="icon"
-          href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23001435'/><path d='M7 5h10.5c3.6 0 6.2 2.2 5.6 5.8-.8 4.8-4.2 6.4-7.8 6.4h-3.6L9.5 29H5.2L7 5z' fill='%23003087'/><path d='M11.5 8.5H22c3.6 0 6.2 2.2 5.6 5.8-.8 4.8-4.2 6.4-7.8 6.4h-3.6L14 32.5H9.7l2.8-24z' fill='%23009CDE'/></svg>"
-        />
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `(function(){try{var m=localStorage.getItem("straightmoney-theme");var p=window.matchMedia("(prefers-color-scheme: dark)").matches;var t=m==="dark"||(m!=="light"&&p)?"dark":"light";document.documentElement.setAttribute("data-theme",t);if(t==="dark"){document.documentElement.classList.add("dark");}else{document.documentElement.classList.remove("dark");}}catch(e){}})();`,
-          }}
-        />
-      </head>
+    <html lang="en" data-theme="light" suppressHydrationWarning className={`${jakarta.variable} ${jakarta.className}`}>
       <body className="min-h-screen bg-[#F5F7FA] text-[#001435] antialiased">
         <div className="liquid-mesh-grid" aria-hidden="true" />
         <div className="liquid-orb-1" aria-hidden="true" />
@@ -47,18 +33,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </a>
         <ThemeProvider>
           <SiteMotion>
-            <Header />
+            <SiteHeader />
             {children}
             <footer className="mt-16 border-t border-white/70 bg-white/60 py-10 text-sm text-slate-600 backdrop-blur-2xl dark:border-white/10 dark:bg-slate-950/60">
             <div className="page-width grid gap-8 sm:grid-cols-2 lg:grid-cols-3">
               <div className="space-y-3.5">
                 <div className="flex items-center gap-2.5">
-                  <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#003087] text-xs font-black text-white">
-                    <svg width="20" height="20" viewBox="0 0 32 32" fill="none" className="-rotate-6 transform">
-                      <path d="M6 5.5h11c3.8 0 6.5 2.5 6 6.3-.9 5.4-4.6 7.2-8.8 7.2H10.5L8 30.5H3.5L6 5.5z" fill="#001C64" />
-                      <path d="M11 9.5h11c3.8 0 6.5 2.5 6 6.3-.9 5.4-4.6 7.2-8.8 7.2h-3.7L13 32.5H8.5L11 9.5z" fill="#009CDE" opacity="0.9" />
-                    </svg>
-                  </span>
+                  <StraightMoneyLogo size={36} idPrefix="footer-logo" />
                   <span className="text-lg font-extrabold tracking-tight text-[#001435]">
                     Straight<span className="text-[#0070BA]">Money</span>
                   </span>

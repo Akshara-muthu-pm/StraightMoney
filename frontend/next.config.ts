@@ -1,6 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Keep production builds from replacing the cache of a running dev server.
+  distDir: process.env.NODE_ENV === "production" ? "build_out" : ".next",
   devIndicators: false,
   // Compress responses with gzip/brotli where the runtime supports it.
   compress: true,

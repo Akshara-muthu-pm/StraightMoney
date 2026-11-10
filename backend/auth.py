@@ -34,6 +34,10 @@ class VendorRegistration(Registration):
     invite_token: str | None = Field(default=None, max_length=200)
 
 
+class VerifierRegistration(Registration):
+    enrollment_key: str = Field(min_length=1, max_length=200)
+
+
 class InviteAcceptance(BaseModel):
     invite_token: str = Field(min_length=32, max_length=200)
 
@@ -168,8 +172,11 @@ def accept_vendor_invite(payload: InviteAcceptance, user: User = Depends(current
 
 
 @router.post("/register-verifier", response_model=AccountOut, status_code=201)
-def register_verifier(payload: Registration, response: Response, db: Session = Depends(get_db)):
-    # Sandbox prototype: verifier accounts use the same registration fields as organizers.
+def register_verifier(payload: VerifierRegistration, response: Response, db: Session = Depends(get_db)):
+    if not settings.verifier_key:
+        raise HTTPException(503, "Verifier enrollment is not configured.")
+    if not hmac.compare_digest(payload.enrollment_key.encode("utf-8"), settings.verifier_key.encode("utf-8")):
+        raise HTTPException(403, "Invalid verifier enrollment key.")
     user = _new_user(db, payload, "verifier")
     return _start_session(db, response, user)
 

@@ -44,7 +44,7 @@ StraightMoney enforces strict separation of duties, deterministic policy gates, 
 | **9. Reversals & Refunds** | Organizers can cancel campaigns to trigger full PayPal capture refunds to donors. PayPal dispute events place holds on available balances. |
 | **10. Transparent Ledger** | The public ledger records all donation captures, payout transfers, and verified reversals with links to raw evidence. Visitors can query ledger history using conversational natural language powered by Gemini (`POST /campaigns/{id}/ledger/ask`). |
 
-Campaign goals are hard caps for new checkouts. The API locks the campaign row and reserves the requested amount before creating a PayPal order; open reservations reduce the amount available to other donors. A completed capture moves the hold into raised funds, while a failed order or PayPal-confirmed void releases it. PayPal orders older than seven days are checked before their holds expire, and late returns cannot capture them. The `006_donation_capacity.sql` migration marks older orders as unreserved, and they must claim capacity before capture. Previously captured overfunding is retained in the ledger and requires a separate refund decision.
+Campaign goals serve as hard caps on total captured funding. Creating or abandoning an unpaid checkout does not reduce campaign availability (`capacity_reserved=False`), ensuring abandoned checkout sessions never exhaust campaign capacity. Immediately prior to capture, the API locks the campaign row (`SELECT ... FOR UPDATE`) and atomically claims capacity (`_claim_capture_capacity`) to prevent simultaneous transactions from overfunding the goal. A confirmed PayPal capture moves the claim into raised funds and credits the campaign pool balance; confirmed failed payments release the claim immediately. Genuine PayPal pending or uncertain capture attempts remain protected until their status resolves. Previously captured overfunding is retained in the ledger and requires a separate refund decision.
 
 ---
 
@@ -70,12 +70,12 @@ Before an invoice can reach a verifier for payout approval, it must pass eight s
 StraightMoney is optimized for low compute, low memory, and minimal network overhead across both client and server:
 
 ### Frontend & Client-Side
-- **On-Demand ag-Grid Code Splitting**: Extracted the ~500 KB `ag-grid-community` and `ag-grid-react` library into a lazy component (`LedgerAgGrid.tsx`) using `React.lazy` and `Suspense`. The default lightweight HTML table loads instantly; the heavy grid bundle is downloaded on demand only when the user selects "Interactive grid".
+- **Route-Scoped Ledger Grid**: The public ledger imports `LedgerAgGrid.tsx` directly so its default interactive grid renders reliably. Other routes do not mount the grid, and visitors can switch to the simple HTML table from the ledger toolbar.
 - **Image Optimization & Bandwidth Reduction**: Configured Next.js Image Optimization to automatically negotiate modern `image/avif` and `image/webp` formats, shrinking public illustration transfer sizes by 50–70%.
 - **Edge & Browser Caching**: Enabled Gzip / Brotli payload compression (`compress: true`), 1-year immutable caching for local fonts (`Cache-Control: public, max-age=31536000, immutable`), 1-week revalidated caching for public images (`stale-while-revalidate`), and explicit `no-store` headers on API proxy endpoints.
 - **Background CPU & Battery Conservation**: Connected carousel animations to the HTML5 Page Visibility API (`visibilitychange`). Timers are cleared (`clearInterval`) when tabs are backgrounded or minimized, preventing idle CPU cycles.
 - **DOM Layout Thrashing Elimination**: Debounced `MutationObserver` layout measurements via `requestAnimationFrame` inside `SiteMotion.tsx`, batching bounding box computations.
-- **Zero-CLS Font Loading**: Configured font loaders with `display: "optional"` to eliminate Cumulative Layout Shift (CLS) on initial paint.
+- **Consistent Typography**: Self-hosted Plus Jakarta Sans is applied across pages and controls, with `display: "swap"` so the intended font appears once loaded.
 - **GPU Animation Gating**: Wrapped continuous orb floats and stream animations inside `@media (prefers-reduced-motion: no-preference)`, respecting accessibility preferences and sparing mobile GPU compositing.
 
 ### Backend & Database
@@ -83,6 +83,7 @@ StraightMoney is optimized for low compute, low memory, and minimal network over
 - **High-Frequency Query Indexing**: Added explicit database indexes to foreign keys and lookup columns (`BudgetLine.vendor_id`, `Invoice.budget_line_id`, `Invoice.vendor_id`, `Donation.paypal_order_id`, and `AuditLog.campaign_id / invoice_id / action / timestamp`).
 - **GenAI Client Singleton**: Replaced per-request client allocations in `advisory.py` and `extraction.py` with a module-level cached singleton, reusing existing HTTP/2 socket pools.
 - **Database Connection Pooling**: Configured connection recycling (`pool_recycle: 1800`), explicit pool sizing (`pool_size: 10`, `max_overflow: 20`, and `pool_timeout: 30`) for PostgreSQL to prevent connection leaks under concurrent traffic.
+- **Background Payout Queue Reconciliation**: An asynchronous background worker (`_reconcile_payout_queue`) runs periodically during the FastAPI lifespan to process eligible approved invoices awaiting funds or pending PayPal confirmation without requiring manual intervention.
 
 ---
 
@@ -108,12 +109,14 @@ StraightMoney is optimized for low compute, low memory, and minimal network over
 ## UI/UX Design System
 
 - **VisionOS-Inspired Liquid-Glass**: Frosted glass panels (`backdrop-filter: blur(20px)`), glowing border states, and PayPal-branded accents (`#003087` Navy, `#0070BA` Blue, `#009CDE` Cyan, `#FFC439` Gold).
+- **Custom Brand Identity & PWA Ready**: Handcrafted SVG brand identity vector (`StraightMoneyLogo.tsx`, `icon.svg`, `favicon.ico`, Apple touch icon, and Web App Manifest `manifest.json`), featuring forward momentum, dual giving/payout streams, and a verified golden payout node.
+- **Explainable Screening Report & Delivery Tracking**: Dedicated WCAG AA-compliant visual screening report (`ScreeningReport.tsx`) separating extracted document facts, deterministic policy checks, AI advisory notes, and next human actions, alongside public milestone fulfillment tracking (`FulfillmentProgress.tsx`).
 - **Startup Milestone Escrow & Backer Pledges**: Dedicated **Startups & Emerging** cause track (`/explore/startups`, `/explore/startups/[campaignId]`) with interactive venture case studies, direct **Back Milestone via PayPal** actions, and milestone-locked supplier disbursements.
 - **Theme Switching**: Glare-free dark-mode and light-mode system with instant local storage persistence and system preference sync (`ThemeProvider`).
-- **Interactive Role-Based Sign In**: Modern split-card layout with 4 distinct interactive role cards and dynamic real-time storytelling on the campaign's mission.
+- **Interactive Role-Based Sign In**: Modern split-card layout with 4 distinct interactive role cards and dynamic real-time storytelling on the campaign's mission. Verifier registration requires the configured `VERIFIER_KEY`.
 - **Rich File Upload Dropzones**: Drag-and-drop file targets with live preview thumbnails, badge indicators, and file-size validation.
 - **Phased OCR Progress Feedback**: Dual-ring animated spinner with 3 live phased stage badges (Upload Artifacts, Gemini OCR Analysis, Policy Rule Evaluation) and elapsed duration counter.
-- **Dynamic Campaign Budgeting**: Organizers can add, assign, and delete budget line items seamlessly before publishing.
+- **Dynamic Campaign Budgeting**: Organizers can add, assign, and delete budget line items seamlessly before publishing, enforced by Decimal-cent exact equality between campaign goal and vendor line totals.
 - **WCAG AA Compliant**: High-contrast typography and glare-free dark-mode decision controls.
 
 ---
@@ -141,7 +144,7 @@ Key environment variables in `.env`:
 - `PAYPAL_BASE_URL`: `https://api-m.sandbox.paypal.com`
 - `LLM_API_KEY`: Your Google Gemini API key.
 - `LLM_MODEL`: Primary model (e.g. `gemini-1.5-flash` or `gemini-3.8-flash`).
-- Verifier signup uses name, email and password in this sandbox prototype; no enrollment key is required.
+- Set a private `VERIFIER_KEY` in the backend `.env` before enrolling verifiers. Verifier registration is disabled when it is unset; the signup form requires the key alongside name, email and password.
 - `ADMIN_SETUP_KEY`: Setup secret to claim the seeded campaign.
 - `DATABASE_URL`: PostgreSQL connection string (defaults to `postgresql+psycopg://straightmoney:change-me@localhost:5432/straightmoney`).
 
@@ -183,6 +186,17 @@ npm run dev
 
 Open <http://localhost:3000> in your browser.
 
+The frontend runs with Next.js Webpack. Development output is stored in `frontend/.next`; production builds use `frontend/build_out` so a build does not replace the running dev server's files.
+
+If the browser shows a Next.js **stale** badge, a blank page, or `Lazy element type must resolve to a class or function`, stop the frontend dev server in its terminal and restart it. If the error persists, clear only the generated development cache from the `frontend` folder, then start the server again:
+
+```powershell
+Remove-Item -LiteralPath .next -Recurse -Force
+npm run dev
+```
+
+Make sure the previous project dev server has stopped before starting another one; otherwise Next.js may select port 3001 or report that a server is already running. Once the new server reports `Ready`, reload <http://localhost:3000> with **Ctrl+Shift+R** to discard cached browser files.
+
 ---
 
 ## Automated Testing & Verification
@@ -199,6 +213,13 @@ Compiles all routes, validates TypeScript types, and verifies production bundle 
 
 ```powershell
 npm --prefix frontend run build
+```
+
+### Full Backend Automated Test Suite
+Runs the 168+ unit and mock integration test suite across all 17 backend test modules (or 174 tests including PostgreSQL concurrency and migrations when `TEST_POSTGRES_URL` is configured):
+
+```powershell
+backend\.venv\Scripts\python -m pytest backend/tests -v
 ```
 
 ### Backend Deterministic Policy Tests
@@ -235,7 +256,7 @@ Exercise actual PayPal Sandbox checkout and payout calls (requires valid Sandbox
    - In `/vendor`, select the assigned budget line, drag-and-drop an invoice PDF/image and proof photo, and click Submit.
    - Watch the live phased progress indicator as Gemini extracts invoice items and the policy engine runs.
 5. **Verifier Approval**:
-   - Register a **Verifier** account on `/signin` using a name, email address and password (no enrollment key required in this sandbox prototype).
+   - Set `VERIFIER_KEY` in the backend `.env`, then register a **Verifier** account on `/signin` using a name, email address, password and enrollment key.
    - Open `/verifier` to inspect the invoice, AI advisory notes, and policy results. Click **Approve Invoice**.
    - The backend schedules and executes a PayPal Payouts batch.
 6. **Auditing & Closeout**:
@@ -252,29 +273,35 @@ StraightMoney/
 ├── backend/
 │   ├── advisory.py          # LLM advisory risk checks & ledger Q&A (singleton GenAI client)
 │   ├── audit.py             # Immutable audit logging
-│   ├── auth.py              # Role-based sessions, cookie security, registration
+│   ├── auth.py              # Role-based sessions, cookie security, enrollment keys
 │   ├── config.py            # Pydantic Settings & environment variables
 │   ├── db.py                # Database connection pooling & session management
 │   ├── extraction.py        # Gemini multimodal OCR & invoice data extraction
 │   ├── finance.py           # Balance calculation & refund tracking
 │   ├── guards.py            # Upload size limits & rate limiting middleware
 │   ├── installments.py      # Automated installment queue & payout execution
-│   ├── main.py              # FastAPI application & optimized REST endpoints
+│   ├── main.py              # FastAPI application, background workers & REST endpoints
+│   ├── migrations/          # Additive SQL database schema migrations (001-007)
 │   ├── models.py            # SQLAlchemy database models with optimized indexes
 │   ├── payments.py          # PayPal Sandbox Orders & Payouts REST client
 │   ├── policy.py            # Deterministic 8-point policy verification engine
+│   ├── public_progress.py   # Public milestone fulfillment progress endpoint
 │   ├── reconciliation.py    # PayPal webhook verification & dispute reconciliation
 │   ├── schemas.py           # Pydantic input/output validation models
+│   ├── scripts/             # CLI donation/payout tests and campaign reset tools
 │   ├── seed.py              # Demo campaign seed data
-│   └── tests/               # Backend policy, webhook, installment & unit tests
+│   ├── tests/               # 17 backend test modules (policy, webhooks, accounts, etc.)
+│   └── uploads.py           # Upload handling & magic-byte validation
 │
 ├── frontend/
-│   ├── app/                 # Next.js App Router (home, explore, campaigns, ledger, signin, workspaces)
-│   ├── components/          # Liquid-glass UI components (Header, LedgerGrid, LedgerAgGrid, etc.)
-│   ├── lib/                 # Client API client, presentation utilities, demo sessions
-│   ├── public/images/       # Public campaign illustrations & media
-│   └── tests/               # Node test runner interaction & UI invariance suite
+│   ├── app/                 # Next.js App Router (campaigns, donate, donor, explore, ledger, organizer, signin, vendor, verifier)
+│   ├── components/          # Liquid-glass UI components (SiteHeader, StraightMoneyLogo, LedgerGrid, ScreeningReport, etc.)
+│   ├── lib/                 # API client, presentation utilities, demo state
+│   ├── public/              # Web manifest, application icons, campaign illustrations
+│   └── tests/               # UI invariance, spring animation & interaction test suite
 │
+├── docs/                    # Rehearsal demo script & release verification reports
+├── sample_invoices/         # Synthetic sample invoice PDFs and delivery proof photos
 ├── docker-compose.yml       # PostgreSQL database container configuration
 └── SPEC.md                  # Hackathon technical specification & architecture requirements
 ```
@@ -304,7 +331,7 @@ To reset local Sandbox donations for Stationary and Sports, stop the backend and
 ## V6: independent review and explainable screening
 
 - Verifiers may approve, request more evidence, reject with a reason, or escalate an awaiting claim. Escalations block payment; any independent verifier can record an investigation outcome and return the claim to review, or request evidence. Final verifier rejection is not reopened through this flow; appeals are a future feature.
-- Approval requires a recipient-confirmation checkbox and a method/reference. This records the verifier's attestation, not an authenticated response from a separate beneficiary account. Existing keyless sandbox verifier signup is unchanged.
+- Approval requires a recipient-confirmation checkbox and a method/reference. This records the verifier's attestation, not an authenticated response from a separate beneficiary account. Verifier signup requires the configured enrollment key.
 - Vendors can correct MORE_EVIDENCE_REQUIRED, policy REJECTED or extraction NEEDS_REVIEW claims using the same invoice ID. Full corrected invoice and proof are required. Earlier files, extracted data, policy results and correction notes remain in revision history. Verifier rejections and escalations cannot be bypassed through vendor resubmission.
 - Shared screening report separates extracted document facts, deterministic policy results, uncertain AI observations, and next human actions. AI observations do not authorize payout.
 - Campaign creation records beneficiary and expected deliverables. Existing campaigns show these as unspecified until an amendment is approved. Organizer amendments cover target, beneficiary, deliverables and reassignment to existing campaign vendors, with reason, independent approval/rejection, before/after history and a public amendment view. Reassignment is blocked after a line has invoice submissions. Targets cannot be reduced below received or actively processing funding.
@@ -320,8 +347,8 @@ The demo uses payment after delivery with trusted vendors. Installments are post
 
 Rule-based review guidance classifies claims as standard confirmation, detailed review, or correction/rejection review. Standard requires extracted data, required files, passed policy rules and available advisory findings with no recorded flags. Escalations, incomplete screening, advisory problems and failed checks receive deeper review. Guidance is not an authenticity score and never authorizes payment: independent recipient confirmation remains mandatory.
 
-## V8: vendor payment badges and fully allocated campaigns
+## V8: vendor payment badges, fully allocated campaigns and background reconciliation
 
-Vendor/organizer budget-line badges now distinguish approved-awaiting-payment, pending PayPal confirmation, partial payment, failed payment, evidence requests, escalation, simulation and confirmed Payment successful. Review is reserved for actual unreviewed submissions. Workspace polls saved review/payment status every 10 seconds while visible and refreshes when the tab is reactivated; it does not trigger new payouts. Existing webhook/status-reconciliation paths still establish payment completion. Approval alone never establishes that vendor funds arrived.
+Vendor/organizer budget-line badges now distinguish approved-awaiting-payment, pending PayPal confirmation, partial payment, failed payment, evidence requests, escalation, simulation and confirmed Payment successful. Review is reserved for actual unreviewed submissions. Workspace polls saved review/payment status every 10 seconds while visible and refreshes when the tab is reactivated; it does not trigger new payouts. Existing webhook/status-reconciliation paths still establish payment completion. Approval alone never establishes that vendor funds arrived. An asynchronous background reconciliation worker (`_reconcile_payout_queue`) runs periodically during the FastAPI lifespan to automatically resume and disburse eligible payouts awaiting funds or pending PayPal confirmation without requiring manual intervention.
 
 New campaign creation requires at least one vendor-assigned budget line and exact equality of goal and total budget allocations, using Decimal cents on the API. Under/over allocation, missing vendor identity and unused vendor records are rejected without saving the campaign. The form shows unallocated/excess amounts and disables publishing until balanced. This validation applies to new campaigns; existing campaigns are retained.

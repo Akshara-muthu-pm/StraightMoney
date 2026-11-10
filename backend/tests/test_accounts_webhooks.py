@@ -77,7 +77,7 @@ def test_roles_and_vendor_assignment_are_enforced(client):
     assert browser.post("/invoices", data={"campaign_id": campaign["id"], "budget_line_id": 999, "invoice_number": "A"}).status_code == 404
     assert browser.post("/invoices/999/approve", json={"verifier_name": "Fake"}).status_code == 403
     browser.post("/auth/logout")
-    assert _register(browser, "verifier", "reviewer@example.com").status_code == 201
+    assert _register(browser, "verifier", "reviewer@example.com", enrollment_key="enrollment-secret").status_code == 201
     assert browser.post("/invoices/999/approve", json={"verifier_name": "Fake"}).status_code == 404
     assert browser.post("/campaigns", json=payload).status_code == 403
 
@@ -396,11 +396,19 @@ def test_donor_updates_and_report_follow_saved_milestones(client):
                and row["delivery_proof_url"].endswith("/files/11") for row in rows)
 
 
-def test_verifier_signup_without_enrollment_key(client):
-    browser, _ = client
-    created = _register(browser, "verifier", "keyless@example.com")
+def test_verifier_signup_requires_configured_enrollment_key(client, monkeypatch):
+    browser, engine = client
+    assert _register(browser, "verifier", "keyless@example.com").status_code == 422
+    assert _register(browser, "verifier", "wrong@example.com", enrollment_key="wrong-key").status_code == 403
+    assert _register(browser, "verifier", "unicode@example.com", enrollment_key="wrong-🔑").status_code == 403
+    monkeypatch.setattr(settings, "verifier_key", "")
+    assert _register(browser, "verifier", "unconfigured@example.com", enrollment_key="enrollment-secret").status_code == 503
+    with Session(engine) as db:
+        assert db.query(User).count() == 0
+    monkeypatch.setattr(settings, "verifier_key", "enrollment-secret")
+    created = _register(browser, "verifier", "reviewer@example.com", enrollment_key="enrollment-secret")
     assert created.status_code == 201, created.text
     assert created.json()["role"] == "verifier"
-    assert browser.get("/auth/me").json()["email"] == "keyless@example.com"
-    assert _register(browser, "verifier", "keyless@example.com").status_code == 409
+    assert browser.get("/auth/me").json()["email"] == "reviewer@example.com"
+    assert _register(browser, "verifier", "reviewer@example.com", enrollment_key="enrollment-secret").status_code == 409
     assert browser.post("/auth/register-verifier", json={"name": "Reviewer", "email": "short@example.com", "password": "short"}).status_code == 422
