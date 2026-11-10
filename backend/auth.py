@@ -202,8 +202,9 @@ def campaign_creation_limit(user: User = Depends(current_user), db: Session = De
     if user.role != "organizer":
         raise HTTPException(403, "Organizer account required.")
     count = db.query(Campaign).filter_by(organizer_user_id=user.id).count()
-    return {"limit": settings.max_campaigns_per_organizer, "count": count,
-            "remaining": max(0, settings.max_campaigns_per_organizer - count)}
+    limit = settings.max_campaigns_per_organizer or None
+    return {"limit": limit, "count": count,
+            "remaining": max(0, limit - count) if limit is not None else None}
 
 
 @router.get("/my-campaigns", response_model=list[CampaignOut])

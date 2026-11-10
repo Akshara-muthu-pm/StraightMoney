@@ -53,3 +53,14 @@ def test_unused_vendor_cannot_be_added_without_a_budget_allocation(client):
     assert 'Every campaign vendor' in response.text
     with Session(engine) as db:
         assert db.query(Campaign).count()==0
+
+
+def test_organizer_can_create_more_than_five_campaigns_by_default(client):
+    browser, _ = client
+    _register(browser, 'organizer', 'owner@example.com')
+    for _ in range(6):
+        response = browser.post('/campaigns', json=payload())
+        assert response.status_code == 201, response.text
+    assert browser.get('/auth/campaign-creation-limit').json() == {
+        'limit': None, 'count': 6, 'remaining': None,
+    }

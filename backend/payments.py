@@ -485,7 +485,7 @@ class PayPalClient:
                     },
                     "receiver": payout_email,
                     "note": f"StraightMoney payout for invoice #{invoice_id} — {vendor_name}",
-                    "sender_item_id": str(installment_id or invoice_id),
+                    "sender_item_id": sender_batch_id,
                 }
             ],
         }

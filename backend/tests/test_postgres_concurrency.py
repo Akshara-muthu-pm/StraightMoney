@@ -148,7 +148,9 @@ def test_concurrent_approvals_cannot_overcommit_budget(postgres):
         with Session(engine) as db:
             barrier.wait(timeout=10)
             try:
-                asyncio.run(main.approve_invoice(id,VerificationCreate(verifier_name="R"),db))
+                approval = VerificationCreate(verifier_name="R", recipient_confirmed=True,
+                                              confirmation_reference="Recipient confirmed delivery by phone.")
+                asyncio.run(main.approve_invoice(id, approval, db))
                 return 200
             except HTTPException as exc:
                 return exc.status_code

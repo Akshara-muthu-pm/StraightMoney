@@ -5,10 +5,14 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from models import BudgetLine, Campaign, Donation, Invoice, PayoutInstallment, Vendor
+from datetime import datetime, timedelta, timezone
 import math
 import uuid
 import audit
 from payments import PayPalClient, PayPalError
+
+
+PAYABLE_STATUSES = {"AWAITING_FUNDS", "PARTIALLY_PAID", "PAYOUT_PENDING"}
 
 
 def paid_amount(invoice: Invoice) -> float:
@@ -72,7 +76,9 @@ async def pay_available(db: Session, invoice: Invoice, paypal: PayPalClient) -> 
     campaign = db.query(Campaign).filter_by(id=invoice.campaign_id).with_for_update().populate_existing().one()
     invoice = db.query(Invoice).filter_by(id=invoice.id).with_for_update().populate_existing().one()
     db.expire(invoice, ["installments", "verifications", "payout"])
-    if invoice.status in {"MORE_EVIDENCE_REQUIRED", "ESCALATED", "SUBMITTED", "EXTRACTED", "CHECKED", "NEEDS_REVIEW", "AWAITING_VERIFIER"} or not any(v.decision == "approve" for v in invoice.verifications):
+    if (invoice.status not in PAYABLE_STATUSES
+            or not any(v.decision == "approve" for v in invoice.verifications)
+            or (invoice.payout and not invoice.installments)):
         db.commit()
         return
     pending = next((p for p in invoice.installments if p.status == "pending"), None)
@@ -85,14 +91,12 @@ async def pay_available(db: Session, invoice: Invoice, paypal: PayPalClient) -> 
                 _apply_status(db, pending, result)
             except PayPalError:
                 return
-        else:
-            await _send_part(db, pending, paypal)
+        elif (datetime.now(timezone.utc).replace(tzinfo=None) - pending.created_at
+              < timedelta(days=29)):
+            await _send_part(db, pending, paypal, replay=True)
         if pending.status != "success":
             return
         await pay_available(db, invoice, paypal)
-        return
-    if invoice.status in {"FAILED", "PAID", "VERIFIER_REJECTED", "REJECTED"}:
-        db.commit()
         return
     reserved = db.query(func.coalesce(func.sum(PayoutInstallment.amount), 0.0)).join(Invoice).filter(
         Invoice.campaign_id == campaign.id, PayoutInstallment.status == "pending"
@@ -131,13 +135,12 @@ async def pay_available(db: Session, invoice: Invoice, paypal: PayPalClient) -> 
     await _send_part(db, part, paypal)
 
 
-async def _send_part(db: Session, part: PayoutInstallment, paypal: PayPalClient) -> None:
+async def _send_part(db: Session, part: PayoutInstallment, paypal: PayPalClient, *, replay: bool = False) -> None:
     invoice = part.invoice
     vendor = invoice.vendor
     try:
         result = await paypal.create_payout(invoice_id=invoice.id, installment_id=part.id,
             amount=part.amount, currency=invoice.currency, payout_email=invoice.payout_email, vendor_name=vendor.name, sender_batch_id=part.sender_batch_id)
-        part.paypal_batch_id = result.get("batch_header", {}).get("payout_batch_id")
         _apply_status(db, part, result)
         if part.status == "pending" and part.paypal_batch_id:
             _apply_status(db, part, await paypal.get_payout_status(part.paypal_batch_id))
@@ -150,10 +153,14 @@ async def _send_part(db: Session, part: PayoutInstallment, paypal: PayPalClient)
             db.commit()
             return
         # A network error may follow an accepted request. Keep its idempotency key reserved.
-        if part.paypal_batch_id or exc.status_code >= 500 or "DUPLICATE_BATCH_ID" in str(exc.body):
+        unconfigured = exc.body == {"error": "paypal_not_configured"}
+        if (replay or part.paypal_batch_id or (exc.status_code >= 500 and not unconfigured)
+                or exc.status_code in {408, 429} or "DUPLICATE_BATCH_ID" in str(exc.body)):
             part.status = "pending"
             invoice.status = "PAYOUT_PENDING"
-            invoice.ai_summary = (invoice.ai_summary or "") + "\nPayout status uncertain; check PayPal before retrying."
+            message = "Payout status uncertain; check PayPal before retrying."
+            if message not in (invoice.ai_summary or ""):
+                invoice.ai_summary = ((invoice.ai_summary or "") + "\n" + message).strip()
         else:
             part.status = "failed"
             invoice.status = "FAILED"
@@ -164,7 +171,10 @@ async def _send_part(db: Session, part: PayoutInstallment, paypal: PayPalClient)
                 "from a supported sending country before retrying."
                 if payout_unavailable else "Payout request was rejected by PayPal. Check account configuration before retrying."
             )
-            invoice.ai_summary = (invoice.ai_summary or "") + f"\n{message}"
+            if unconfigured:
+                message = "Configure PayPal Sandbox credentials before retrying this payout."
+            if message not in (invoice.ai_summary or ""):
+                invoice.ai_summary = ((invoice.ai_summary or "") + "\n" + message).strip()
         audit.log(db, actor="system", action="payout.request_error", campaign_id=invoice.campaign_id,
                   invoice_id=invoice.id, detail={"installment_id": part.id, "error": str(exc)}, commit=False)
         db.commit()
@@ -172,6 +182,6 @@ async def _send_part(db: Session, part: PayoutInstallment, paypal: PayPalClient)
 
 async def pay_campaign(db: Session, campaign_id: int, paypal: PayPalClient) -> None:
     invoices = db.query(Invoice).filter(Invoice.campaign_id == campaign_id,
-        Invoice.status.in_(["AWAITING_FUNDS", "PARTIALLY_PAID", "PAYOUT_PENDING"])).order_by(Invoice.id).all()
+        Invoice.status.in_(PAYABLE_STATUSES)).order_by(Invoice.id).all()
     for invoice in invoices:
         await pay_available(db, invoice, paypal)

@@ -23,7 +23,6 @@ export default function SignInPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [inviteToken, setInviteToken] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
@@ -35,10 +34,7 @@ export default function SignInPage() {
     try {
       const account = authTab === "login"
         ? await api.login(email, password)
-        : await api.registerAccount(activeRole, {
-            name, email, password,
-            ...(activeRole === "vendor" && inviteToken.trim() ? { invite_token: inviteToken.trim() } : {}),
-          });
+        : await api.registerAccount(activeRole, { name, email, password });
       signOutDemo();
       setAccount(account);
       router.push(`/${account.role}`);

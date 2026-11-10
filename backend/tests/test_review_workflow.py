@@ -1,6 +1,7 @@
 """Independent review transitions, same-claim corrections and controlled amendments."""
+import json
 from sqlalchemy.orm import Session
-from models import Invoice, InvoiceRevision, StoredFile, Campaign, Vendor
+from models import Invoice, InvoiceRevision, StoredFile, Campaign, CampaignAmendment, Vendor
 from tests.test_regressions import client, upload, as_role, png, reset_rate_limits
 
 
@@ -71,7 +72,7 @@ def test_amendment_is_recorded_and_independently_reviewed(client):
     browser, engine, _ = client
     as_role(browser,'organizer')
     original=browser.get('/campaigns/1').json()
-    proposed=browser.post('/campaigns/1/amendments',json={'note':'Recipient needs a larger book order.', 'goal_amount':1200,
+    proposed=browser.post('/campaigns/1/amendments',json={'note':'Recipient clarified the book order.',
                       'beneficiary':'School library', 'expected_deliverables':'40 books delivered to the library.'})
     assert proposed.status_code == 201,proposed.text
     aid=proposed.json()['id']
@@ -83,16 +84,21 @@ def test_amendment_is_recorded_and_independently_reviewed(client):
     assert approved.status_code==200,approved.text
     assert approved.json()['previous']['goal_amount']==original['goal_amount']
     final=browser.get('/campaigns/1').json()
-    assert final['goal_amount']==1200 and final['beneficiary']=='School library'
+    assert final['goal_amount']==original['goal_amount'] and final['beneficiary']=='School library'
     assert browser.get('/campaigns/1/amendments').json()[0]['status']=='approved'
     assert browser.post(f'/amendments/{aid}/reject',json={'note':'Cannot change final decision'}).status_code==409
 
 
 def test_amendment_cannot_reduce_target_below_funding_or_reassign_submitted_work(client):
-    browser, _, _=client
+    browser, engine, _=client
     upload(browser)
-    as_role(browser,'organizer')
-    proposal=browser.post('/campaigns/1/amendments',json={'note':'Lower target requested','goal_amount':1}).json()
+    # Older versions accepted mismatched targets before verifier review.
+    with Session(engine) as db:
+        amendment = CampaignAmendment(campaign_id=1, reason='Lower target requested',
+                                     proposed_json=json.dumps({'goal_amount': 1}))
+        db.add(amendment)
+        db.commit()
+        proposal = {'id': amendment.id}
     as_role(browser,'verifier')
     assert browser.post(f"/amendments/{proposal['id']}/approve",json={'note':'Review target reduction'}).status_code==409
     assert browser.post(f"/amendments/{proposal['id']}/reject",json={'note':'Cannot reduce below collected donations'}).status_code==200
@@ -100,3 +106,25 @@ def test_amendment_cannot_reduce_target_below_funding_or_reassign_submitted_work
     proposal=browser.post('/campaigns/1/amendments',json={'note':'Reassign submitted work','vendor_assignments':{'1':1}}).json()
     as_role(browser,'verifier')
     assert browser.post(f"/amendments/{proposal['id']}/approve",json={'note':'Review reassignment'}).status_code==409
+
+
+def test_amendment_cannot_approve_unallocated_target(client):
+    browser, engine, _ = client
+    as_role(browser, 'organizer')
+    response = browser.post('/campaigns/1/amendments', json={
+        'note': 'Increase the target without adding a vendor allocation.', 'goal_amount': 1200,
+    })
+    assert response.status_code == 409
+    assert 'total vendor budget' in response.json()['detail']
+
+    with Session(engine) as db:
+        amendment = CampaignAmendment(campaign_id=1, reason='Legacy target increase',
+                                     proposed_json=json.dumps({'goal_amount': 1200}))
+        db.add(amendment)
+        db.commit()
+        amendment_id = amendment.id
+    as_role(browser, 'verifier')
+    result = browser.post(f"/amendments/{amendment_id}/approve", json={'note': 'Review the proposed target.'})
+    assert result.status_code == 409
+    assert 'total vendor budget' in result.json()['detail']
+    assert browser.get('/campaigns/1').json()['goal_amount'] == 400

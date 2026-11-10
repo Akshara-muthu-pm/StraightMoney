@@ -154,7 +154,7 @@ async def _dispute(db: Session, record: WebhookEvent, event: dict, paypal: PayPa
 
 def _matching_payout_item(response: dict, part: PayoutInstallment) -> dict | None:
     return next((item for item in response.get("items", [])
-                 if (item.get("payout_item") or {}).get("sender_item_id") == part.sender_batch_id), None)
+                 if (item.get("payout_item") or {}).get("sender_item_id") in {part.sender_batch_id, str(part.id)}), None)
 
 
 async def _payout(db: Session, record: WebhookEvent, event: dict, paypal: PayPalClient) -> str:

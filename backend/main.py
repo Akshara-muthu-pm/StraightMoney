@@ -12,6 +12,7 @@ import asyncio
 import csv
 import io
 import json
+import logging
 import hashlib
 import math
 from decimal import Decimal
@@ -66,7 +67,7 @@ from models import (
     Verification,
 )
 from payments import PayPalClient, PayPalError
-from installments import pay_available, pay_campaign
+from installments import pay_available, pay_campaign, PAYABLE_STATUSES
 from policy import run_policy_checks
 from schemas import (
     ReviewNote,
@@ -112,7 +113,37 @@ async def lifespan(app: FastAPI):
         seed_demo_data(db)
     finally:
         db.close()
-    yield
+    worker = asyncio.create_task(_reconcile_payout_queue()) if paypal.is_configured else None
+    try:
+        yield
+    finally:
+        if worker is not None:
+            worker.cancel()
+            await asyncio.gather(worker, return_exceptions=True)
+
+
+async def _reconcile_payout_queue() -> None:
+    """Resume eligible payments even when no verifier or webhook is active."""
+    logger = logging.getLogger(__name__)
+    while True:
+        await asyncio.sleep(30)
+        try:
+            with SessionLocal() as db:
+                invoice_ids = [row.id for row in db.query(Invoice.id).join(Campaign).filter(
+                    Campaign.status == "active",
+                    Invoice.status.in_(PAYABLE_STATUSES),
+                    or_(Invoice.status == "PAYOUT_PENDING", Campaign.pool_balance > 0),
+                ).order_by(Invoice.id)]
+            for invoice_id in invoice_ids:
+                try:
+                    with SessionLocal() as db:
+                        invoice = db.get(Invoice, invoice_id)
+                        if invoice is not None:
+                            await _pay_with_deadline(db, invoice)
+                except Exception:
+                    logger.exception("Could not reconcile payout for invoice %s", invoice_id)
+        except Exception:
+            logger.exception("Could not read the payout queue")
 
 
 app = FastAPI(
@@ -292,7 +323,7 @@ def _recheck_approval(db: Session, invoice: Invoice) -> None:
 @router.post("/campaigns", response_model=CampaignDetail, status_code=201, dependencies=[Depends(require_organizer)])
 def create_campaign(payload: CampaignCreate, db: Session = Depends(get_db), request: Request = None):
     """Create a new fundraising campaign with optional vendors and budget lines."""
-    if request is not None:
+    if request is not None and settings.max_campaigns_per_organizer:
         # Serialize creation for the same account, including concurrent requests.
         db.query(User).filter_by(id=request.state.actor.id).with_for_update().one()
         count = db.query(Campaign).filter_by(organizer_user_id=request.state.actor.id).count()
@@ -520,6 +551,8 @@ def _reserve_donation(db: Session, campaign_id: int, payload: DonationCreate) ->
         raise HTTPException(404, f"Campaign {campaign_id} not found.")
     if campaign.status != "active":
         raise HTTPException(400, "Donations are only accepted for active campaigns.")
+    if not payload.simulate and not paypal.is_configured:
+        raise HTTPException(503, "PayPal Sandbox checkout is not configured.")
     remaining = _campaign_funding(db, campaign)["remaining"]
     if payload.amount > remaining:
         raise HTTPException(409, f"Only {campaign.currency} {remaining:.2f} remains available for this campaign.")
@@ -634,8 +667,6 @@ async def create_donation(
     """
     if payload.simulate and not settings.allow_simulated_donations:
         raise HTTPException(status_code=403, detail="Simulated donations are disabled.")
-    if not payload.simulate and not paypal.is_configured:
-        raise HTTPException(status_code=503, detail="PayPal Sandbox checkout is not configured.")
     donation = await run_in_threadpool(_reserve_donation, db, campaign_id, payload)
     approval_url = None
     if not payload.simulate:
@@ -823,7 +854,7 @@ async def capture_donation(order_id: str, db: Session = Depends(get_db)):
             await asyncio.wait_for(pay_campaign(db, campaign.id, paypal), timeout=_PAYOUT_WAIT_SECONDS)
         except (TimeoutError, PayPalError):
             db.rollback()
-            # The donation is already committed. A vendor status check can resume the queue.
+            # The background worker can resume payouts after the donation commits.
             audit.log(db, actor="system", action="payout.queue_deferred", campaign_id=campaign.id)
     return DonationCaptureOut(
         **DonationOut.model_validate(donation).model_dump(),
@@ -1381,12 +1412,14 @@ async def retry_invoice(
         raise HTTPException(status_code=500, detail="Data integrity error: related records missing.")
 
     # Reconcile the existing transfer before attempting another installment.
-    if invoice.installments:
+    if invoice.payout and not invoice.installments:
+        raise HTTPException(409, "This legacy payout requires manual PayPal reconciliation.")
+    if not any(v.decision == "approve" for v in invoice.verifications):
+        raise HTTPException(409, "Only approved invoices can be paid.")
+    if invoice.status == "FAILED":
         invoice.status = "PARTIALLY_PAID" if invoice.paid_amount > 0 else "AWAITING_FUNDS"
-        db.commit()
-        await _pay_with_deadline(db, invoice)
-    else:
-        raise HTTPException(status_code=409, detail="This legacy payout requires manual PayPal reconciliation.")
+    db.commit()
+    await _pay_with_deadline(db, invoice)
 
     db.refresh(invoice)
     return _invoice_to_detail(invoice)
@@ -1682,6 +1715,12 @@ def list_amendments(campaign_id: int, db: Session = Depends(get_db)):
     return [_amendment_out(a) for a in db.query(CampaignAmendment).filter_by(campaign_id=campaign_id).order_by(CampaignAmendment.id).all()]
 
 
+def _validate_amended_goal(campaign: Campaign, goal: float) -> None:
+    total = sum(Decimal(str(line.budgeted_amount)) for line in campaign.budget_lines)
+    if not campaign.budget_lines or Decimal(str(goal)) != total:
+        raise HTTPException(409, f"The target must equal the total vendor budget of {campaign.currency} {total:.2f}.")
+
+
 @router.post("/campaigns/{campaign_id}/amendments", status_code=201, dependencies=[Depends(require_organizer)])
 def propose_amendment(campaign_id: int, payload: AmendmentCreate, request: Request, db: Session = Depends(get_db)):
     campaign = db.query(Campaign).filter_by(id=campaign_id).with_for_update().one_or_none()
@@ -1696,6 +1735,8 @@ def propose_amendment(campaign_id: int, payload: AmendmentCreate, request: Reque
         proposed.pop("vendor_assignments", None)
     if not proposed:
         raise HTTPException(422, "Specify at least one proposed change.")
+    if payload.goal_amount is not None:
+        _validate_amended_goal(campaign, payload.goal_amount)
     row = CampaignAmendment(campaign_id=campaign_id, proposed_json=json.dumps(proposed), reason=payload.note)
     db.add(row)
     audit.log(db, actor=request.state.actor.name, action="campaign.amendment_requested", campaign_id=campaign_id, detail=payload.note, commit=False)
@@ -1718,8 +1759,11 @@ def decide_amendment(amendment_id: int, decision: str, payload: ReviewNote, requ
         proposed = json.loads(row.proposed_json)
         previous = {key: getattr(campaign, key) for key in ("goal_amount", "beneficiary", "expected_deliverables")}
         previous["vendor_assignments"] = {str(line.id): line.vendor_id for line in campaign.budget_lines}
-        if "goal_amount" in proposed and proposed["goal_amount"] < _campaign_funding(db, campaign)["raised"] + _campaign_funding(db, campaign)["reserved"]:
-            raise HTTPException(409, "The target cannot be lower than funding already received or being processed.")
+        if "goal_amount" in proposed:
+            funding = _campaign_funding(db, campaign)
+            if Decimal(str(proposed["goal_amount"])) < Decimal(str(funding["raised"])) + Decimal(str(funding["reserved"])):
+                raise HTTPException(409, "The target cannot be lower than funding already received or being processed.")
+            _validate_amended_goal(campaign, proposed["goal_amount"])
         for line_id, vendor_id in proposed.get("vendor_assignments", {}).items():
             line = db.get(BudgetLine, int(line_id))
             vendor = db.get(Vendor, vendor_id)
