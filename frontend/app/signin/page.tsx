@@ -24,7 +24,6 @@ export default function SignInPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [inviteToken, setInviteToken] = useState("");
-  const [bootstrapKey, setBootstrapKey] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
@@ -39,7 +38,6 @@ export default function SignInPage() {
         : await api.registerAccount(activeRole, {
             name, email, password,
             ...(activeRole === "vendor" && inviteToken.trim() ? { invite_token: inviteToken.trim() } : {}),
-            ...(activeRole === "verifier" ? { bootstrap_key: bootstrapKey } : {}),
           });
       signOutDemo();
       setAccount(account);
@@ -91,9 +89,6 @@ export default function SignInPage() {
                 <button type="button" onClick={() => setShowPassword((value) => !value)} aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? "Hide" : "Show"}</button>
               </span>
             </label>
-            {authTab === "register" && activeRole === "verifier" && <label htmlFor="verifier-key">Verifier enrollment key
-              <input id="verifier-key" required type="password" value={bootstrapKey} onChange={(event) => setBootstrapKey(event.target.value)} autoComplete="off" placeholder="Enter your private enrollment key" />
-            </label>}
             {error && <p className={styles.error} role="alert">{error}</p>}
             <button type="submit" disabled={pending} className={styles.submit}>{pending ? "Please wait…" : authTab === "login" ? "Sign in" : "Create account"}</button>
           </form>

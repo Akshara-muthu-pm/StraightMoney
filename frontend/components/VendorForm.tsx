@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, type FormEvent, type DragEvent } from "react";
 import { api, USE_MOCKS } from "@/lib/api";
-import type { Campaign } from "@/lib/types";
+import type { Campaign, Invoice } from "@/lib/types";
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -132,9 +132,10 @@ function FileDropzone({ label, hint, accept, required = true, file, onSelect }: 
   );
 }
 
-export default function VendorForm({ campaign, onSubmitted }: { campaign: Campaign; onSubmitted: () => void }) {
-  const [lineId, setLineId] = useState(String(campaign.budget_lines[0]?.id ?? ""));
-  const [number, setNumber] = useState("");
+export default function VendorForm({ campaign, onSubmitted, correction }: { campaign: Campaign; onSubmitted: () => void; correction?: Invoice | null }) {
+  const [lineId, setLineId] = useState(String(correction?.budget_line_id ?? campaign.budget_lines[0]?.id ?? ""));
+  const [number, setNumber] = useState(correction?.invoice_number ?? "");
+  const [correctionNote, setCorrectionNote] = useState("");
   const [invoice, setInvoice] = useState<File | null>(null);
   const [proof, setProof] = useState<File | null>(null);
   const [message, setMessage] = useState("");
@@ -153,15 +154,32 @@ export default function VendorForm({ campaign, onSubmitted }: { campaign: Campai
 
   const line = campaign.budget_lines.find((item) => String(item.id) === lineId);
 
+  const blockedReason = campaign.status.toLowerCase() !== "active"
+    ? "This campaign is closed or inactive. New invoices are not accepted."
+    : !line ? "No budget line is assigned. Ask your organizer to assign one."
+    : Math.round((line.budgeted_amount - line.paid_amount) * 100) <= 0
+      ? "This budget line is fully paid. No further invoices can be submitted. Delivery closeout remains available above."
+      : "";
+  const missing = [!number.trim() && "Enter the invoice number.", !invoice && "Attach an invoice (PDF, PNG, JPG or WEBP).", !proof && "Attach a delivery proof photo."].filter(Boolean);
+
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!line || !invoice || !proof) return;
+    setError("");
+    if (blockedReason) { setError(blockedReason); return; }
+    if (correction && correctionNote.trim().length < 5) { setError("Explain what you corrected (at least 5 characters)."); return; }
+    if (!line || !invoice || !proof || !number.trim()) { setError(missing.join(" ")); return; }
+    const invalid = [invoice, proof].find((file) => file.size === 0 || file.size > 10 * 1024 * 1024);
+    if (invalid) { setError(`${invalid.name}: choose a non-empty file of 10 MB or less.`); return; }
+    if (!["application/pdf", "image/png", "image/jpeg", "image/webp"].includes(invoice.type) || !["image/png", "image/jpeg", "image/webp"].includes(proof.type)) {
+      setError("Invoice must be PDF, PNG, JPG or WEBP. Delivery proof must be a PNG, JPG or WEBP photo."); return;
+    }
     setElapsedSec(0);
     setPending(true);
     setError("");
     setMessage("");
 
     const form = new FormData();
+    if (correction) { form.append("original_invoice_id", String(correction.id)); form.append("correction_note", correctionNote.trim()); }
     form.append("campaign_id", String(campaign.id));
     form.append("budget_line_id", String(line.id));
     form.append("invoice_number", number.trim());
@@ -171,6 +189,11 @@ export default function VendorForm({ campaign, onSubmitted }: { campaign: Campai
 
     try {
       const result = await api.uploadInvoice(form);
+      if (["REJECTED", "NEEDS_REVIEW"].includes(result.status)) {
+        const reasons = result.checks.filter((check) => !check.passed && check.severity === "hard").map((check) => check.detail);
+        setError(`Invoice ${result.invoice_number} was not accepted. ${reasons.join(" ") || result.ai_summary || "Review the invoice details and delivery evidence, then try again."}`);
+        return;
+      }
       setMessage(
         USE_MOCKS
           ? "Demo submission preview; no files were uploaded."
@@ -186,7 +209,7 @@ export default function VendorForm({ campaign, onSubmitted }: { campaign: Campai
 
   return (
     <div className="grid gap-8 lg:grid-cols-[1.4fr_1fr] items-start">
-      <form onSubmit={submit} className="liquid-glass p-6 sm:p-8 space-y-6">
+      <form noValidate onSubmit={submit} className="liquid-glass p-6 sm:p-8 space-y-6">
         <div>
           <div className="flex items-center gap-2">
             <span className="h-2 w-2 rounded-full bg-[#0070BA] animate-pulse" />
@@ -195,19 +218,21 @@ export default function VendorForm({ campaign, onSubmitted }: { campaign: Campai
             </p>
           </div>
           <h2 className="mt-2 text-2xl font-extrabold tracking-tight text-[#001435] dark:text-white">
-            Submit delivery paperwork
+            {correction ? `Correct invoice ${correction.invoice_number}` : "Submit delivery paperwork"}
           </h2>
           <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
             Upload your invoice and photo proof. Gemini AI checks OCR fields, policy rules evaluate limits, and human verifiers approve payouts.
           </p>
         </div>
 
+        {blockedReason && <p role="status" className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">{blockedReason}</p>}
         <div>
           <label className="block text-xs font-extrabold uppercase tracking-wider text-slate-600 dark:text-slate-300">
             Budget line assignment
             <select
+              disabled={!!correction}
               value={lineId}
-              onChange={(event) => setLineId(event.target.value)}
+              onChange={(event) => { setLineId(event.target.value); setError(""); setMessage(""); }}
               className="mt-1.5 block w-full rounded-xl border border-slate-300 bg-white/90 px-3.5 py-2.5 text-sm font-semibold text-[#001435] shadow-xs backdrop-blur-md transition focus:border-[#0070BA] focus:outline-none focus:ring-2 focus:ring-[#0070BA]/20 dark:border-white/10 dark:bg-slate-900/90 dark:text-white"
             >
               {campaign.budget_lines.map((item) => (
@@ -230,12 +255,14 @@ export default function VendorForm({ campaign, onSubmitted }: { campaign: Campai
             <div className="mt-2.5 flex items-center justify-between border-t border-blue-200/50 pt-2 text-slate-600 dark:text-slate-300">
               <span className="font-semibold">Remaining line budget:</span>
               <strong className="text-sm font-black text-[#001435] dark:text-white tabular-nums">
-                ${(line.budgeted_amount - line.paid_amount).toFixed(2)}
+                ${Math.max(0, line.budgeted_amount - line.paid_amount).toFixed(2)}
               </strong>
             </div>
           </div>
         )}
 
+        {correction && <label className="block text-sm font-bold">What did you correct?<textarea value={correctionNote} onChange={(e) => setCorrectionNote(e.target.value)} maxLength={5000} className="mt-2 w-full rounded-xl border border-slate-300 bg-white p-3 text-slate-950 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /><p className="mt-1 text-xs font-normal">Upload the complete corrected invoice and proof. Earlier files remain in this claim’s history.</p></label>}
+        <fieldset disabled={pending || !!blockedReason} className="space-y-6 disabled:opacity-60">
         <div>
           <label className="block text-xs font-extrabold uppercase tracking-wider text-slate-600 dark:text-slate-300">
             Invoice Number
@@ -265,10 +292,12 @@ export default function VendorForm({ campaign, onSubmitted }: { campaign: Campai
           onSelect={setProof}
         />
 
+        </fieldset>
+        {!blockedReason && missing.length > 0 && <ul aria-live="polite" className="list-disc pl-5 text-xs text-slate-700 dark:text-slate-200">{missing.map((item) => <li key={String(item)}>{item}</li>)}</ul>}
         <div className="pt-2">
           <button
             type="submit"
-            disabled={pending || !line || !invoice || !proof || !number.trim()}
+            disabled={pending || !!blockedReason}
             className="button-primary w-full shadow-lg shadow-blue-950/15 disabled:cursor-not-allowed disabled:opacity-50 text-sm font-extrabold"
           >
             {pending ? (

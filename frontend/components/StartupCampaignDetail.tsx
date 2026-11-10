@@ -1,5 +1,6 @@
 "use client";
 
+import PaymentModelNotice from "./PaymentModelNotice";
 import { useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
@@ -66,6 +67,6 @@ export default function StartupCampaignDetail({ id }: { id: number }) {
           <p className="mt-5 text-xs leading-5 text-slate-500 dark:text-slate-400">Payments use PayPal Sandbox. Supplier payments appear in the public ledger when confirmed.</p>
         </aside>
       </div>
-    </main>
+    <PaymentModelNotice /></main>
   );
 }

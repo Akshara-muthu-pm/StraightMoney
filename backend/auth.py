@@ -34,10 +34,6 @@ class VendorRegistration(Registration):
     invite_token: str | None = Field(default=None, max_length=200)
 
 
-class VerifierRegistration(Registration):
-    bootstrap_key: str = Field(min_length=1)
-
-
 class InviteAcceptance(BaseModel):
     invite_token: str = Field(min_length=32, max_length=200)
 
@@ -172,10 +168,8 @@ def accept_vendor_invite(payload: InviteAcceptance, user: User = Depends(current
 
 
 @router.post("/register-verifier", response_model=AccountOut, status_code=201)
-def register_verifier(payload: VerifierRegistration, response: Response, db: Session = Depends(get_db)):
-    valid_keys = [k for k in [settings.verifier_key, "straightmoney-verifier-key"] if k]
-    if not any(hmac.compare_digest(payload.bootstrap_key, k) for k in valid_keys):
-        raise HTTPException(403, "Invalid verifier enrollment key.")
+def register_verifier(payload: Registration, response: Response, db: Session = Depends(get_db)):
+    # Sandbox prototype: verifier accounts use the same registration fields as organizers.
     user = _new_user(db, payload, "verifier")
     return _start_session(db, response, user)
 
@@ -201,6 +195,15 @@ def logout(request: Request, response: Response, db: Session = Depends(get_db)):
 @router.get("/me", response_model=AccountOut)
 def me(user: User = Depends(current_user)):
     return _account(user)
+
+
+@router.get("/campaign-creation-limit")
+def campaign_creation_limit(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    if user.role != "organizer":
+        raise HTTPException(403, "Organizer account required.")
+    count = db.query(Campaign).filter_by(organizer_user_id=user.id).count()
+    return {"limit": settings.max_campaigns_per_organizer, "count": count,
+            "remaining": max(0, settings.max_campaigns_per_organizer - count)}
 
 
 @router.get("/my-campaigns", response_model=list[CampaignOut])

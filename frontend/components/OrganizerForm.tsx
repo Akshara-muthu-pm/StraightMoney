@@ -14,6 +14,8 @@ export default function OrganizerForm({
   onCreated: (id: number) => void;
 }) {
   const [title, setTitle] = useState("");
+  const [beneficiary, setBeneficiary] = useState("");
+  const [deliverables, setDeliverables] = useState("");
   const [description, setDescription] = useState("");
   const [goal, setGoal] = useState("");
   const [organizer, setOrganizer] = useState("");
@@ -40,8 +42,12 @@ export default function OrganizerForm({
   );
   const numericGoal = Number(goal) > 0 ? Number(goal) : 0;
 
+  const budgetMatches = numericGoal > 0 && Math.round(totalLinesAmount * 100) === Math.round(numericGoal * 100);
+  const budgetDifference = Math.round((numericGoal - totalLinesAmount) * 100) / 100;
+
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!budgetMatches) { setError("Allocate the entire campaign goal across vendor budget lines exactly before creating the campaign."); return; }
     setPending(true);
     setError("");
     setMessage("");
@@ -57,6 +63,8 @@ export default function OrganizerForm({
       );
 
       const created = await api.createCampaign({
+        beneficiary: beneficiary.trim(),
+        expected_deliverables: deliverables.trim(),
         title: title.trim(),
         description: description.trim(),
         goal_amount: Number(goal),
@@ -102,6 +110,11 @@ export default function OrganizerForm({
           </p>
         </div>
 
+        <div className="grid gap-4 sm:grid-cols-2">
+          <label className="text-sm font-bold">Beneficiary<input required maxLength={2000} value={beneficiary} onChange={(e) => setBeneficiary(e.target.value)} placeholder="Who receives the goods or services?" className="mt-2 block w-full rounded-xl border border-slate-300 bg-white p-3 text-slate-950 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
+          <label className="text-sm font-bold">Expected deliverables<textarea required maxLength={5000} value={deliverables} onChange={(e) => setDeliverables(e.target.value)} placeholder="Items, quantities and delivery expectations" className="mt-2 block w-full rounded-xl border border-slate-300 bg-white p-3 text-slate-950 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
+        </div>
+        <p className="text-xs text-slate-600 dark:text-slate-300">Changes to the target, beneficiary, deliverables or vendor assignments use recorded amendments reviewed by an independent verifier.</p>
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="block text-xs font-extrabold uppercase tracking-wider text-slate-600 dark:text-slate-300">
             Campaign Title
@@ -270,10 +283,13 @@ export default function OrganizerForm({
           </div>
         </div>
 
+        <p role="status" className={`rounded-xl border p-4 text-sm ${budgetMatches ? "border-emerald-300 bg-emerald-50 text-emerald-950 dark:bg-emerald-950 dark:text-emerald-100" : "border-amber-300 bg-amber-50 text-amber-950 dark:bg-amber-950 dark:text-amber-100"}`}>
+          {budgetMatches ? "The full campaign goal is allocated to vendor budget lines." : numericGoal <= 0 ? "Enter a campaign goal and allocate it fully to vendor budget lines." : budgetDifference > 0 ? `$${budgetDifference.toFixed(2)} remains unallocated. Split this amount among the vendor budget lines.` : `Budget lines exceed the goal by $${Math.abs(budgetDifference).toFixed(2)}. Reduce the allocations or update the goal.`}
+        </p>
         <div className="pt-2">
           <button
             type="submit"
-            disabled={pending || !title.trim() || numericGoal <= 0}
+            disabled={pending || !title.trim() || numericGoal <= 0 || !budgetMatches}
             className="button-primary w-full shadow-lg shadow-blue-950/15 disabled:cursor-not-allowed disabled:opacity-50 text-sm font-extrabold"
           >
             {pending ? (

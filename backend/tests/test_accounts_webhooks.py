@@ -47,7 +47,7 @@ def _register(browser, role, email, **extra):
 
 def test_roles_and_vendor_assignment_are_enforced(client):
     browser, _ = client
-    payload = {"title": "Garden", "goal_amount": 100, "organizer_name": "Spoofed",
+    payload = {"title": "Garden", "goal_amount": 150, "organizer_name": "Spoofed",
         "vendors": [{"name": "Supplier", "payout_email": "supplier@example.com"},
                     {"name": "Other", "payout_email": "other@example.com"}],
         "budget_lines": [{"name": "Soil", "budgeted_amount": 100,
@@ -77,7 +77,7 @@ def test_roles_and_vendor_assignment_are_enforced(client):
     assert browser.post("/invoices", data={"campaign_id": campaign["id"], "budget_line_id": 999, "invoice_number": "A"}).status_code == 404
     assert browser.post("/invoices/999/approve", json={"verifier_name": "Fake"}).status_code == 403
     browser.post("/auth/logout")
-    assert _register(browser, "verifier", "reviewer@example.com", bootstrap_key="enrollment-secret").status_code == 201
+    assert _register(browser, "verifier", "reviewer@example.com").status_code == 201
     assert browser.post("/invoices/999/approve", json={"verifier_name": "Fake"}).status_code == 404
     assert browser.post("/campaigns", json=payload).status_code == 403
 
@@ -391,6 +391,16 @@ def test_donor_updates_and_report_follow_saved_milestones(client):
     assert "attachment" in report.headers["content-disposition"]
     rows = list(csv.DictReader(io.StringIO(report.content.decode("utf-8-sig"))))
     assert len(rows) == len(browser.get("/campaigns/1/ledger").json())
-    assert any(row["entry_type"] == "donation" and row["actor"].startswith("'=HYPERLINK") for row in rows)
-    assert any(row["entry_type"] == "payout" and row["invoice_url"].endswith("/files/10")
+    assert any(row["entry_type"] == "donation" and row["actor"].startswith("Donor ") for row in rows)
+    assert any(row["entry_type"] == "payout" and row["invoice_url"] == ""
                and row["delivery_proof_url"].endswith("/files/11") for row in rows)
+
+
+def test_verifier_signup_without_enrollment_key(client):
+    browser, _ = client
+    created = _register(browser, "verifier", "keyless@example.com")
+    assert created.status_code == 201, created.text
+    assert created.json()["role"] == "verifier"
+    assert browser.get("/auth/me").json()["email"] == "keyless@example.com"
+    assert _register(browser, "verifier", "keyless@example.com").status_code == 409
+    assert browser.post("/auth/register-verifier", json={"name": "Reviewer", "email": "short@example.com", "password": "short"}).status_code == 422

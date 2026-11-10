@@ -31,6 +31,8 @@ class Campaign(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, nullable=False)
+    beneficiary = Column(Text, nullable=True)
+    expected_deliverables = Column(Text, nullable=True)
     description = Column(Text, nullable=True)
     goal_amount = Column(Float, nullable=False)
     currency = Column(String, default="USD", nullable=False)
@@ -154,9 +156,10 @@ class Invoice(Base):
     vendor = relationship("Vendor", back_populates="invoices")
     files = relationship("StoredFile", back_populates="invoice", cascade="all, delete-orphan")
     checks = relationship("Check", back_populates="invoice", cascade="all, delete-orphan")
-    verifications = relationship("Verification", back_populates="invoice", cascade="all, delete-orphan")
+    verifications = relationship("Verification", back_populates="invoice", cascade="all, delete-orphan", order_by="Verification.id")
     payout = relationship("Payout", back_populates="invoice", uselist=False, cascade="all, delete-orphan")
     installments = relationship("PayoutInstallment", back_populates="invoice", cascade="all, delete-orphan")
+    revisions = relationship("InvoiceRevision", cascade="all, delete-orphan", order_by="InvoiceRevision.id")
     delivery = relationship("DeliveryCloseout", back_populates="invoice", uselist=False, cascade="all, delete-orphan")
 
     @property
@@ -357,3 +360,26 @@ class PaymentAdjustment(Base):
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow, nullable=False)
 
     donation = relationship("Donation", back_populates="adjustments")
+
+
+class InvoiceRevision(Base):
+    __tablename__ = "invoice_revisions"
+    id = Column(Integer, primary_key=True)
+    invoice_id = Column(Integer, ForeignKey("invoices.id"), nullable=False, index=True)
+    snapshot_json = Column(Text, nullable=False)
+    correction_note = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=_utcnow, nullable=False)
+
+
+class CampaignAmendment(Base):
+    __tablename__ = "campaign_amendments"
+    id = Column(Integer, primary_key=True)
+    campaign_id = Column(Integer, ForeignKey("campaigns.id"), nullable=False, index=True)
+    proposed_json = Column(Text, nullable=False)
+    previous_json = Column(Text, nullable=True)
+    reason = Column(Text, nullable=False)
+    status = Column(String, default="pending", nullable=False)
+    reviewer_name = Column(String, nullable=True)
+    review_note = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=_utcnow, nullable=False)
+    reviewed_at = Column(DateTime, nullable=True)

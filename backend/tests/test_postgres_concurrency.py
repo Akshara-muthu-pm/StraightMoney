@@ -82,7 +82,7 @@ def test_concurrent_allocation_reserves_and_debits_only_once(postgres):
     assert len(paypal.keys) == 1
 
 
-def test_concurrent_donors_cannot_reserve_more_than_campaign_goal(postgres):
+def test_concurrent_capture_claims_cannot_exceed_campaign_goal(postgres):
     engine, _ = postgres
     with Session(engine) as db:
         campaign = db.query(Campaign).one()
@@ -93,10 +93,11 @@ def test_concurrent_donors_cannot_reserve_more_than_campaign_goal(postgres):
 
     def worker(index):
         with Session(engine) as db:
+            donation = main._reserve_donation(db, campaign_id,
+                main.DonationCreate(donor_name=f"Donor {index}", amount=80, simulate=True))
             barrier.wait(timeout=10)
             try:
-                main._reserve_donation(db, campaign_id,
-                    main.DonationCreate(donor_name=f"Donor {index}", amount=80, simulate=True))
+                main._claim_legacy_capacity(db, donation.id)
                 return 201
             except HTTPException as exc:
                 return exc.status_code

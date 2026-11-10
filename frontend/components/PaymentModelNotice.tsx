@@ -1,0 +1,3 @@
+export default function PaymentModelNotice() {
+  return <aside className="my-5 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-950 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-100"><strong>Payment after delivery · PayPal Sandbox demo</strong><p className="mt-1">Trusted vendors supply the goods first. Evidence screening and independent recipient confirmation come before payout authorization. Partial payouts may follow as funds arrive; they are not delivery advances.</p><p className="mt-2 text-xs">This prototype demonstrates conditional vendor payments. It is not a real escrow service. Simulated actions never establish that money was transferred.</p></aside>;
+}

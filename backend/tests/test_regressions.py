@@ -108,7 +108,7 @@ def test_upload_uses_content_canonical_number_and_database_evidence(client):
     assert duplicate.status_code == 201
     assert duplicate.json()["status"] == "REJECTED"
     as_role(browser, "verifier")
-    approved = browser.post(f'/invoices/{detail["id"]}/approve', json={"verifier_name":"Reviewer"})
+    approved = browser.post(f'/invoices/{detail["id"]}/approve', json={"verifier_name":"Reviewer", "recipient_confirmed":True, "confirmation_reference":"Recipient confirmed delivery in test"})
     assert approved.status_code == 200, approved.text
     assert approved.json()["status"] == "PAID"
     ledger = browser.get("/campaigns/1/ledger").json()
@@ -116,10 +116,12 @@ def test_upload_uses_content_canonical_number_and_database_evidence(client):
 
 
 def test_missing_separate_proof_rejects_invoice(client):
-    browser, _, _ = client
+    browser, engine, _ = client
     response = upload(browser, proof=False)
-    assert response.status_code == 201
-    assert response.json()["status"] == "REJECTED"
+    assert response.status_code == 400
+    assert "proof photo" in response.json()["detail"]
+    with Session(engine) as db:
+        assert db.query(Invoice).count() == 0
 
 
 def test_spoofed_active_proof_is_rejected_before_persisting(client):
@@ -139,8 +141,8 @@ def test_approval_rechecks_budget_after_two_uploads(client):
     second = upload(browser,"SECOND-FORM").json()
     assert first["status"] == second["status"] == "AWAITING_VERIFIER"
     as_role(browser, "verifier")
-    assert browser.post(f'/invoices/{first["id"]}/approve',json={"verifier_name":"R"}).status_code == 200
-    response = browser.post(f'/invoices/{second["id"]}/approve',json={"verifier_name":"R"})
+    assert browser.post(f'/invoices/{first["id"]}/approve',json={"verifier_name":"R", "recipient_confirmed":True, "confirmation_reference":"Recipient confirmed delivery in test"}).status_code == 200
+    response = browser.post(f'/invoices/{second["id"]}/approve',json={"verifier_name":"R", "recipient_confirmed":True, "confirmation_reference":"Recipient confirmed delivery in test"})
     assert response.status_code == 409
     assert "budget" in response.json()["detail"]
 
@@ -280,8 +282,8 @@ def test_rate_limit_applies_to_verifier_attempts(client,monkeypatch):
     browser,_,_=client
     browser.cookies.clear()
     monkeypatch.setattr(settings,"write_rate_limit",1)
-    assert browser.post("/invoices/1/approve",json={"verifier_name":"R"}).status_code == 401
-    assert browser.post("/invoices/1/approve",json={"verifier_name":"R"}).status_code == 429
+    assert browser.post("/invoices/1/approve",json={"verifier_name":"R", "recipient_confirmed":True, "confirmation_reference":"Recipient confirmed delivery in test"}).status_code == 401
+    assert browser.post("/invoices/1/approve",json={"verifier_name":"R", "recipient_confirmed":True, "confirmation_reference":"Recipient confirmed delivery in test"}).status_code == 429
 
 
 def test_oversize_request_is_rejected_without_content_length(client,monkeypatch):

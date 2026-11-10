@@ -7,6 +7,9 @@ from sqlalchemy.orm import Session
 from models import BudgetLine, Campaign, Vendor
 
 
+LEGACY_STARTUP_DESCRIPTION = 'Hardware venture building autonomous precision spraying drones for sustainable agriculture. Capital is held in PayPal Sandbox escrow. Funds disburse in tranches only after airframe dimensional test reports and motor bench test photos pass AI and human verification.'
+STARTUP_DESCRIPTION = 'Hardware venture building autonomous precision spraying drones for sustainable agriculture. Sandbox demo of payment after delivery, not real escrow. Supplier payments are authorized only after evidence screening and independent recipient confirmation.'
+
 PUBLIC_CAUSES = (
     (
         "Community Garden Beds",
@@ -57,6 +60,13 @@ PUBLIC_CAUSES = (
 
 def seed_demo_data(db: Session) -> None:
     """Insert the demo campaigns once; leave donations to the PayPal flow."""
+    # Correct only the exact old demo copy; preserve user edits and all financial data.
+    legacy = db.query(Campaign).filter_by(title="AeroDrone Ag - Autonomous Precision Drone", description=LEGACY_STARTUP_DESCRIPTION).first()
+    if legacy:
+        legacy.description = STARTUP_DESCRIPTION
+        import audit
+        audit.log(db, actor="system", action="campaign.demo_copy_corrected", campaign_id=legacy.id,
+                  detail="Clarified Sandbox payment-after-delivery demo; no financial data changed.")
     if not db.query(Campaign).filter_by(title="School Library Corner").first():
         campaign = Campaign(
             title="School Library Corner",
@@ -122,7 +132,7 @@ def seed_demo_data(db: Session) -> None:
     if not db.query(Campaign).filter_by(title="AeroDrone Ag - Autonomous Precision Drone").first():
         startup = Campaign(
             title="AeroDrone Ag - Autonomous Precision Drone",
-            description="Hardware venture building autonomous precision spraying drones for sustainable agriculture. Capital is held in PayPal Sandbox escrow. Funds disburse in tranches only after airframe dimensional test reports and motor bench test photos pass AI and human verification.",
+            description=STARTUP_DESCRIPTION,
             goal_amount=12500.0,
             currency="USD",
             pool_balance=0.0,

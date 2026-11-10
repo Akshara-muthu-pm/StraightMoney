@@ -1,11 +1,14 @@
 "use client";
 
+import PaymentModelNotice from "./PaymentModelNotice";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api, USE_MOCKS } from "@/lib/api";
 import type { Campaign, CampaignSummary, Donation, Invoice } from "@/lib/types";
 import { budgetLineStatus, money, totalFunded, type BudgetLineStatus } from "@/lib/presentation";
 import DashboardShell from "./DashboardShell";
+import ScreeningReport from "./ScreeningReport";
+import AmendmentPanel from "./AmendmentPanel";
 import OrganizerForm from "./OrganizerForm";
 import VendorForm from "./VendorForm";
 import InvoiceStages from "./InvoiceStages";
@@ -13,7 +16,14 @@ import ProgressBar from "./ProgressBar";
 import DeliveryCloseoutPanel from "./DeliveryCloseoutPanel";
 
 const lineBadge: Record<BudgetLineStatus, { label: string; icon: string; className: string }> = {
-  paid: { label: "Paid", icon: "✅", className: "border-emerald-200 bg-emerald-50 text-emerald-900" },
+  paid: { label: "Payment successful", icon: "✅", className: "border-emerald-200 bg-emerald-50 text-emerald-900" },
+  approved: { label: "Approved — awaiting funds/payment", icon: "✓", className: "border-blue-200 bg-blue-50 text-blue-950" },
+  "payment-pending": { label: "Approved — payment pending", icon: "⏳", className: "border-amber-200 bg-amber-50 text-amber-950" },
+  "partially-paid": { label: "Partially paid", icon: "◐", className: "border-blue-200 bg-blue-50 text-blue-950" },
+  "payment-failed": { label: "Approved — payment failed", icon: "!", className: "border-red-200 bg-red-50 text-red-950" },
+  "evidence-required": { label: "More evidence required", icon: "!", className: "border-amber-200 bg-amber-50 text-amber-950" },
+  escalated: { label: "Escalated", icon: "!", className: "border-red-200 bg-red-50 text-red-950" },
+  simulated: { label: "Simulated — no funds sent", icon: "◌", className: "border-amber-200 bg-amber-50 text-amber-950" },
   rejected: { label: "Rejected", icon: "❌", className: "border-red-200 bg-red-50 text-red-900" },
   "awaiting-vendor": { label: "Awaiting vendor", icon: "⏳", className: "border-amber-200 bg-amber-50 text-amber-900" },
   "in-review": { label: "In review", icon: "🔵", className: "border-blue-200 bg-blue-50 text-[#003087]" },
@@ -24,6 +34,7 @@ export default function ProjectWorkspace({ role }: { role: "Organizer" | "Vendor
 }
 
 function WorkspaceContent({ role }: { role: "Organizer" | "Vendor" }) {
+  const [correction, setCorrection] = useState<Invoice | null>(null);
   const [campaigns, setCampaigns] = useState<CampaignSummary[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [campaign, setCampaign] = useState<Campaign | null>(null);
@@ -34,7 +45,12 @@ function WorkspaceContent({ role }: { role: "Organizer" | "Vendor" }) {
   const [vendorId, setVendorId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [syncError, setSyncError] = useState("");
   const [revision, setRevision] = useState(0);
+  const [creationLimit, setCreationLimit] = useState<{ limit: number; count: number; remaining: number } | null>(null);
+  useEffect(() => {
+    if (role === "Organizer") api.campaignCreationLimit().then(setCreationLimit).catch(() => setCreationLimit(null));
+  }, [role, revision]);
   const [creating, setCreating] = useState(false);
   const [notice, setNotice] = useState("");
   const [assignedVendorIds, setAssignedVendorIds] = useState<number[]>([]);
@@ -77,6 +93,19 @@ function WorkspaceContent({ role }: { role: "Organizer" | "Vendor" }) {
     }).catch((cause: unknown) => { if (active) setError(cause instanceof Error ? cause.message : "Could not load project work."); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [selectedId, revision, role]);
+  useEffect(() => {
+    if (selectedId === null) return;
+    let active = true;
+    const sync = () => {
+      if (document.visibilityState !== "visible") return;
+      Promise.all([api.getCampaign(selectedId), api.getInvoices(selectedId)]).then(([project, rows]) => {
+        if (active) {setCampaign(project); setInvoices(rows); setSyncError("");}
+      }).catch(() => {if (active) setSyncError("Latest review/payment status could not refresh. Use Refresh records to try again.");});
+    };
+    const timer = window.setInterval(sync, 10000);
+    document.addEventListener("visibilitychange", sync);
+    return () => {active = false; window.clearInterval(timer); document.removeEventListener("visibilitychange", sync);};
+  }, [selectedId]);
   const assignedVendors = campaign?.vendors.filter((item) => assignedVendorIds.includes(item.id)) ?? [];
   const vendor = assignedVendors.find((item) => item.id === vendorId) ?? assignedVendors[0];
   const lines = campaign?.budget_lines.filter((line) => role === "Organizer" || (vendor && line.vendor_id === vendor.id)) ?? [];
@@ -225,6 +254,7 @@ function WorkspaceContent({ role }: { role: "Organizer" | "Vendor" }) {
           <button
             type="button"
             className="button-primary text-xs"
+            disabled={loading || (!creating && (!creationLimit || creationLimit.remaining === 0))}
             aria-expanded={creating}
             aria-controls="create-campaign"
             onClick={() => setCreating((value) => !value)}
@@ -234,10 +264,15 @@ function WorkspaceContent({ role }: { role: "Organizer" | "Vendor" }) {
         )}
       </div>
     </div>
+    {role === "Organizer" && creationLimit && <p role="status" className="mb-4 text-sm text-slate-700 dark:text-slate-200">
+      {creationLimit.count} / {creationLimit.limit} campaigns created. {creationLimit.remaining === 0 ? "Campaign creation limit reached." : `${creationLimit.remaining} remaining.`}
+    </p>}
+    {syncError && <p role="status" className="mb-4 rounded-xl border border-amber-300 p-3 text-sm">{syncError}</p>}
+    <PaymentModelNotice />
     {notice && <p role="status" className="mb-5 rounded-2xl border border-blue-200/80 bg-blue-50/80 p-4 text-xs font-bold text-[#003087] backdrop-blur-md">{notice}</p>}
     {error && <p role="alert" className="mb-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-xs font-bold text-red-900">{error}</p>}
     {loading && <p role="status" className="text-xs text-slate-500">Loading project work...</p>}
-    {role === "Organizer" && creating ? (
+    {role === "Organizer" && creating && creationLimit && creationLimit.remaining > 0 ? (
       <section id="create-campaign">
         <OrganizerForm
           campaign={campaign ?? undefined}
@@ -277,6 +312,7 @@ function WorkspaceContent({ role }: { role: "Organizer" | "Vendor" }) {
               <p className="mt-3 text-xs font-medium text-slate-500">{money(totalFunded(campaign), campaign.currency)} funded of {money(campaign.goal_amount, campaign.currency)}. Includes completed payouts.</p>
             </div>
           )}
+          <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2"><div><dt className="font-bold">Beneficiary</dt><dd>{campaign.beneficiary || "Not specified"}</dd></div><div><dt className="font-bold">Expected deliverables</dt><dd>{campaign.expected_deliverables || "See assigned budget lines; ask the organizer to clarify."}</dd></div></dl>
           <h3 className="mt-6 text-sm font-extrabold text-[#001435]">{role === "Organizer" ? "Budget and vendor assignments" : "Assigned work"}</h3>
           <div className="mt-3 divide-y divide-slate-200/70">
             {lines.map((line) => {
@@ -312,6 +348,7 @@ function WorkspaceContent({ role }: { role: "Organizer" | "Vendor" }) {
           </div>}
         </section>
 
+        {role === "Organizer" && <AmendmentPanel campaignId={campaign.id} campaign={campaign} mode="organizer" onChanged={reload} />}
         <section className="mt-8" aria-labelledby="tracking-title">
           <div className="flex items-center gap-2">
             <span className="h-2 w-2 rounded-full bg-[#0070BA]" />
@@ -329,6 +366,8 @@ function WorkspaceContent({ role }: { role: "Organizer" | "Vendor" }) {
                 </div>
                 <p className="mb-4 mt-1 text-xs text-slate-500">{invoice.vendor_name}</p>
                 <InvoiceStages invoice={invoice} />
+                <details className="mt-3"><summary className="cursor-pointer text-sm font-bold">Screening, decisions and corrections</summary><ScreeningReport invoice={invoice} /></details>
+                {role === "Vendor" && ["MORE_EVIDENCE_REQUIRED", "REJECTED", "NEEDS_REVIEW"].includes(invoice.status) && <button className="button-secondary mt-3 text-xs" onClick={() => { setCorrection(invoice); document.getElementById("upload-title")?.scrollIntoView({behavior: "smooth"}); }}>Correct and resubmit this claim</button>}
                 <DeliveryCloseoutPanel invoice={invoice} role={role} onSaved={() => { setNotice("Delivery closeout saved."); reload(); }} />
                 <p className="mt-3 text-[11px] font-semibold text-slate-500">Recorded status: <span className="font-bold text-[#001435]">{invoice.status.replaceAll("_", " ").toLowerCase()}</span></p>
                 {api.assetUrl(invoice.evidence_path) && (
@@ -377,7 +416,8 @@ function WorkspaceContent({ role }: { role: "Organizer" | "Vendor" }) {
         {role === "Vendor" && lines.length > 0 && (
           <section className="mt-10" aria-labelledby="upload-title">
             <h2 id="upload-title" className="mb-6 text-2xl font-extrabold tracking-tight text-[#001435]">Ready to share your work?</h2>
-            <VendorForm key={`${campaign.id}-${vendor?.id}-${revision}`} campaign={{ ...campaign, budget_lines: lines }} onSubmitted={() => { setNotice("Invoice submitted. Follow its review and payment in the tracker above."); reload(); }} />
+            {correction && <button className="button-secondary mb-3 text-xs" onClick={() => setCorrection(null)}>Cancel correction</button>}
+            <VendorForm correction={correction?.campaign_id === campaign.id && correction.vendor_id === vendor?.id ? correction : null} key={`${campaign.id}-${vendor?.id}-${revision}-${correction?.id ?? "new"}`} campaign={{ ...campaign, budget_lines: lines }} onSubmitted={() => { setCorrection(null); setNotice("Invoice submitted. Follow its review and payment in the tracker above."); reload(); }} />
           </section>
         )}
         {USE_MOCKS && <p className="mt-6 text-[11px] text-slate-500">Sample records. Preview actions do not save changes or send money.</p>}

@@ -65,7 +65,7 @@ async def test_ledger_question_uses_only_selected_campaign_and_confirmed_payouts
             assert result.answer == "Vendor 1 received $50.00."
             snapshot = ask.await_args.args[1]
             assert sorted((row["type"], row["actor_name"], row["amount"]) for row in snapshot) == [
-                ("donation", "Donor", 30.0), ("payout", "Vendor 1", 50.0)
+                ("donation", main.donor_alias(db.query(Donation).one()), 30.0), ("payout", "Vendor 1", 50.0)
             ]
             assert all("proof_url" not in row for row in snapshot)
             with pytest.raises(HTTPException) as missing:

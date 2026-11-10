@@ -1,11 +1,13 @@
 "use client";
 
+import PaymentModelNotice from "./PaymentModelNotice";
+import AmendmentPanel from "./AmendmentPanel";
 import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { api, USE_MOCKS } from "@/lib/api";
 import type { Campaign, Invoice, LedgerEntry } from "@/lib/types";
-import { money, totalFunded } from "@/lib/presentation";
+import { money, totalFunded, invoiceStages } from "@/lib/presentation";
 import { budgetSummary } from "@/lib/budget";
 import { campaignImagery } from "@/lib/campaign-imagery";
 import { useDemoSession, followCampaign } from "@/lib/demo-session";
@@ -14,13 +16,10 @@ import ProgressBar from "@/components/ProgressBar";
 import StatusBadge from "@/components/StatusBadge";
 
 function lineStatus(invoices: Invoice[]) {
-  if (invoices.some((invoice) => invoice.delivery?.accepted_at)) return "Delivered";
-  if (invoices.some((invoice) => invoice.status === "PAID")) return "Paid";
-  if (invoices.some((invoice) => ["VERIFIER_APPROVED", "PAYOUT_PENDING", "PARTIALLY_PAID"].includes(invoice.status))) return "Approved";
-  if (invoices.some((invoice) => invoice.status === "FAILED")) return "Payout pending";
-  if (invoices.some((invoice) => invoice.status === "REJECTED" || invoice.status === "VERIFIER_REJECTED")) return "Rejected";
-  if (invoices.length > 0) return "In review";
-  return "Awaiting vendor";
+  if (!invoices.length) return "Awaiting vendor evidence";
+  const latest = [...invoices].sort((a,b)=>Date.parse(b.created_at)-Date.parse(a.created_at))[0];
+  const stages = invoiceStages(latest);
+  return `${stages.review} · ${stages.payment}`;
 }
 
 export default function CampaignDetail({ id }: { id: number }) {
@@ -60,7 +59,7 @@ export default function CampaignDetail({ id }: { id: number }) {
     setLedger(entries);
   };
 
-  const donorCount = useMemo(() => ledger.filter((entry) => entry.type === "donation" && entry.status === "captured" &&
+  const donorCount = useMemo(() => ledger.filter((entry) => entry.type === "donation" && ["captured", "donated"].includes(entry.status.toLowerCase()) &&
     (entry.donation_id == null || entry.amount + ledger.filter((adjustment) => adjustment.donation_id === entry.donation_id && (adjustment.type === "refund" || adjustment.type === "dispute"))
       .reduce((sum, adjustment) => sum + adjustment.amount, 0) > 0)).length, [ledger]);
 
@@ -91,6 +90,7 @@ export default function CampaignDetail({ id }: { id: number }) {
             </div>
             <h1 className="display-heading mt-4 text-4xl text-[#001435] dark:text-white sm:text-5xl">{campaign.title}</h1>
             {campaign.description && <p className="mt-4 max-w-2xl text-base leading-relaxed text-slate-600 dark:text-slate-300">{campaign.description}</p>}
+            <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2"><div><dt className="font-bold">Beneficiary</dt><dd>{campaign.beneficiary || "Not specified"}</dd></div><div><dt className="font-bold">Promised delivery</dt><dd>{campaign.expected_deliverables || "See campaign budget lines"}</dd></div></dl>
           </header>
 
           {(campaign.cancelled_at || adjustments.length > 0) && (
@@ -166,7 +166,7 @@ export default function CampaignDetail({ id }: { id: number }) {
           <h2 className="text-xl font-bold text-[#001435] dark:text-white">Support this campaign</h2>
           <p className="mt-4 text-2xl font-bold text-[#001435] dark:text-white">{money(funded, campaign.currency)} <span className="text-sm font-normal text-slate-500">raised of {money(campaign.goal_amount, campaign.currency)}</span></p>
           <div className="mt-3"><ProgressBar current={funded} goal={campaign.goal_amount} /></div>
-          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{donorCount.toLocaleString()} {donorCount === 1 ? "donor has" : "donors have"} contributed</p>
+          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{donorCount.toLocaleString()} {donorCount === 1 ? "donation" : "donations"} recorded</p>
           <div className="mt-6 border-t border-slate-200 pt-5 dark:border-slate-800">
             {campaign.status === "active" ? (
               <PayPalDonateButton key={campaign.id} campaignId={campaign.id} campaignTitle={campaign.title} currency={campaign.currency} onCaptured={refresh} />
@@ -180,6 +180,8 @@ export default function CampaignDetail({ id }: { id: number }) {
           </div>
         </aside>
       </div>
+      <PaymentModelNotice />
+      <AmendmentPanel campaignId={campaign.id} campaign={campaign} mode="public" />
     </main>
   );
 }

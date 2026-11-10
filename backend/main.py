@@ -42,11 +42,15 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 from sqlalchemy import func, or_, text
 
 import audit
+from public_progress import public_reference, donor_alias, review_guidance, simulated_payout
 import advisory as advisory_module
 import extraction as extraction_module
 from config import settings
 from db import get_db, init_db, SessionLocal
 from models import (
+    InvoiceRevision,
+    CampaignAmendment,
+    User,
     StoredFile,
     AuditLog,
     PayoutInstallment,
@@ -65,6 +69,8 @@ from payments import PayPalClient, PayPalError
 from installments import pay_available, pay_campaign
 from policy import run_policy_checks
 from schemas import (
+    ReviewNote,
+    AmendmentCreate,
     AdvisoryResult,
     CampaignCreate,
     CampaignCancellation,
@@ -213,7 +219,20 @@ def health_check(db: Session = Depends(get_db)):
 paypal = PayPalClient()
 
 def _invoice_to_detail(inv: Invoice) -> InvoiceDetail:
-    return InvoiceDetail.model_validate(inv)
+    result = InvoiceDetail.model_validate({
+        **InvoiceOut.model_validate(inv).model_dump(), "checks": inv.checks,
+        "verifications": inv.verifications, "payout": inv.payout, "installments": inv.installments})
+    try:
+        result.screening_facts = json.loads(inv.extracted_json or "{}")
+    except ValueError:
+        result.screening_facts = {}
+    result.revisions = [{"id": r.id, "created_at": r.created_at.isoformat(),
+                         "correction_note": r.correction_note, "snapshot": json.loads(r.snapshot_json)} for r in inv.revisions]
+    result.review_guidance = review_guidance(inv)
+    result.payment_mode = "simulated" if simulated_payout(inv) and inv.paid_amount == 0 else "paypal"
+    result.campaign_requirements = {"title": inv.campaign.title, "beneficiary": inv.campaign.beneficiary,
+                                   "expected_deliverables": inv.campaign.expected_deliverables}
+    return result
 
 
 def _guard_invoice_status(inv: Invoice, required: str) -> None:
@@ -273,7 +292,15 @@ def _recheck_approval(db: Session, invoice: Invoice) -> None:
 @router.post("/campaigns", response_model=CampaignDetail, status_code=201, dependencies=[Depends(require_organizer)])
 def create_campaign(payload: CampaignCreate, db: Session = Depends(get_db), request: Request = None):
     """Create a new fundraising campaign with optional vendors and budget lines."""
+    if request is not None:
+        # Serialize creation for the same account, including concurrent requests.
+        db.query(User).filter_by(id=request.state.actor.id).with_for_update().one()
+        count = db.query(Campaign).filter_by(organizer_user_id=request.state.actor.id).count()
+        if count >= settings.max_campaigns_per_organizer:
+            raise HTTPException(409, f"Campaign creation limit reached ({settings.max_campaigns_per_organizer} per organizer).")
     campaign = Campaign(
+        beneficiary=payload.beneficiary,
+        expected_deliverables=payload.expected_deliverables,
         title=payload.title,
         description=payload.description,
         goal_amount=payload.goal_amount,
@@ -297,6 +324,7 @@ def create_campaign(payload: CampaignCreate, db: Session = Depends(get_db), requ
         db.flush()
         vendor_by_email[v.payout_email.strip().lower()] = vendor
 
+    assigned_vendor_ids = set()
     for bl in payload.budget_lines:
         vendor_id = bl.vendor_id
         if vendor_id is not None and vendor_id not in {vendor.id for vendor in vendor_by_email.values()}:
@@ -321,7 +349,10 @@ def create_campaign(payload: CampaignCreate, db: Session = Depends(get_db), requ
             budgeted_amount=bl.budgeted_amount,
         )
         db.add(budget_line)
+        assigned_vendor_ids.add(vendor_id)
 
+    if any(vendor.id not in assigned_vendor_ids for vendor in db.query(Vendor).filter_by(campaign_id=campaign.id).all()):
+        raise HTTPException(422, "Every campaign vendor must be assigned at least one funded budget line.")
     db.commit()
     db.refresh(campaign)
     audit.log(db, actor="system", action="campaign.created", campaign_id=campaign.id)
@@ -363,11 +394,12 @@ def list_campaigns(db: Session = Depends(get_db)):
 
 
 def _campaign_funding(db: Session, campaign: Campaign) -> dict[str, float]:
-    """Count paid work and open checkouts as well as the current pool."""
+    """Unpaid checkout pages never reserve capacity; only actual capture attempts do."""
     paid = db.query(func.coalesce(func.sum(BudgetLine.paid_amount), 0)).filter(BudgetLine.campaign_id == campaign.id).scalar()
     reserved = (db.query(func.coalesce(func.sum(Donation.amount), 0))
                 .filter(Donation.campaign_id == campaign.id, Donation.status.in_(("created", "pending")),
-                        Donation.capacity_reserved.is_(True)).scalar())
+                        Donation.capacity_reserved.is_(True),
+                        or_(Donation.paypal_capture_status == "CAPTURE_IN_PROGRESS", Donation.status == "pending")).scalar())
     cents = lambda value: int((Decimal(str(value or 0)) * 100).to_integral_value())
     raised_cents = cents(campaign.pool_balance) + cents(paid)
     reserved_cents = cents(reserved)
@@ -378,7 +410,6 @@ def _campaign_funding(db: Session, campaign: Campaign) -> dict[str, float]:
 
 @router.get("/campaigns/{campaign_id}/availability")
 async def campaign_availability(campaign_id: int, db: Session = Depends(get_db)):
-    await _reconcile_stale_reservations(db, campaign_id)
     campaign = _get_or_404(db, Campaign, campaign_id)
     return {"goal": campaign.goal_amount, "status": campaign.status, **_campaign_funding(db, campaign)}
 
@@ -483,7 +514,7 @@ async def refund_donation(donation_id: int, request: Request, db: Session = Depe
 
 
 def _reserve_donation(db: Session, campaign_id: int, payload: DonationCreate) -> Donation:
-    """Commit a capacity hold before the external PayPal request begins."""
+    """Create an unpaid attempt without holding campaign capacity."""
     campaign = db.query(Campaign).filter_by(id=campaign_id).with_for_update().populate_existing().one_or_none()
     if campaign is None:
         raise HTTPException(404, f"Campaign {campaign_id} not found.")
@@ -497,7 +528,7 @@ def _reserve_donation(db: Session, campaign_id: int, payload: DonationCreate) ->
     donation = Donation(campaign_id=campaign_id, donor_name=payload.donor_name, amount=payload.amount,
                         currency=campaign.currency, paypal_order_id=order_id,
                         source="simulated" if payload.simulate else "paypal", status="created",
-                        capacity_reserved=True)
+                        capacity_reserved=False)
     db.add(donation)
     db.commit()
     db.refresh(donation)
@@ -521,7 +552,7 @@ def _claim_legacy_capacity(db: Session, donation_id: int) -> Donation:
     initial = db.get(Donation, donation_id)
     campaign = db.query(Campaign).filter_by(id=initial.campaign_id).with_for_update().populate_existing().one()
     donation = db.query(Donation).filter_by(id=donation_id).with_for_update().populate_existing().one()
-    if donation.capacity_reserved or donation.status not in {"created", "pending"}:
+    if (donation.capacity_reserved and donation.paypal_capture_status == "CAPTURE_IN_PROGRESS") or donation.status not in {"created", "pending"}:
         return donation
     if campaign.status != "active" or donation.amount > _campaign_funding(db, campaign)["remaining"]:
         donation.status = "failed"
@@ -529,6 +560,7 @@ def _claim_legacy_capacity(db: Session, donation_id: int) -> Donation:
         db.commit()
         raise HTTPException(409, "This campaign no longer has room for that donation. No payment was captured.")
     donation.capacity_reserved = True
+    donation.paypal_capture_status = "CAPTURE_IN_PROGRESS"
     db.commit()
     return donation
 
@@ -604,7 +636,6 @@ async def create_donation(
         raise HTTPException(status_code=403, detail="Simulated donations are disabled.")
     if not payload.simulate and not paypal.is_configured:
         raise HTTPException(status_code=503, detail="PayPal Sandbox checkout is not configured.")
-    await _reconcile_stale_reservations(db, campaign_id)
     donation = await run_in_threadpool(_reserve_donation, db, campaign_id, payload)
     approval_url = None
     if not payload.simulate:
@@ -817,6 +848,8 @@ def donation_status(order_id: str, db: Session = Depends(get_db)):
 
 @router.post("/invoices", response_model=InvoiceDetail, status_code=201, dependencies=[Depends(require_vendor)])
 async def submit_invoice(
+    original_invoice_id: Optional[int] = Form(None),
+    correction_note: str = Form(""),
     campaign_id: int = Form(...),
     budget_line_id: int = Form(...),
     invoice_number: str = Form(..., min_length=1, max_length=200),
@@ -857,6 +890,13 @@ async def submit_invoice(
     if budget_line.vendor_id != vendor.id:
         raise HTTPException(status_code=403, detail="This vendor is not assigned to the budget line.")
 
+    if campaign.status.lower() != "active":
+        raise HTTPException(409, "This campaign is closed or inactive. New invoices are not accepted.")
+    if round(budget_line.budgeted_amount - budget_line.paid_amount, 2) <= 0:
+        raise HTTPException(409, "This budget line is fully paid. No further invoices can be submitted.")
+    if not proof_photo or not proof_photo.filename:
+        raise HTTPException(400, "Please attach a delivery proof photo (PNG, JPG or WEBP).")
+
     # --- Validate file ---
     actual_file = invoice_file or file
     if actual_file is None:
@@ -879,20 +919,47 @@ async def submit_invoice(
 
     # --- Create initial Invoice row (SUBMITTED) ---
     db.query(Campaign).filter_by(id=campaign_id).with_for_update().populate_existing().one()
-    invoice = Invoice(
-        campaign_id=campaign_id,
-        budget_line_id=budget_line_id,
-        vendor_id=vendor_id,
-        invoice_number=invoice_number.strip()[:200],
-        document_hash=hashlib.sha256(invoice_bytes).hexdigest(),
-        amount=0.0,
-        currency=campaign.currency,
-        payout_email=vendor.payout_email,
-        raw_file_path=None,
-        evidence_path=None,
-        status="SUBMITTED",
-    )
-    db.add(invoice)
+    if original_invoice_id is not None:
+        invoice = _locked_invoice(db, original_invoice_id)
+        if (invoice.vendor_id != vendor.id or invoice.campaign_id != campaign_id
+                or invoice.budget_line_id != budget_line_id):
+            raise HTTPException(403, "Corrections must use the original campaign, vendor and budget line.")
+        if invoice.status not in {"MORE_EVIDENCE_REQUIRED", "REJECTED", "NEEDS_REVIEW"}:
+            raise HTTPException(409, "This claim is not open for evidence correction.")
+        if len(correction_note.strip()) < 5:
+            raise HTTPException(422, "Explain the correction in at least 5 characters.")
+        snapshot = {"invoice_number": invoice.invoice_number, "amount": invoice.amount,
+                    "status": invoice.status, "raw_file_path": invoice.raw_file_path,
+                    "evidence_path": invoice.evidence_path, "ai_summary": invoice.ai_summary,
+                    "extracted": invoice.extracted_json,
+                    "checks": [{"check_name": c.check_name, "passed": c.passed, "detail": c.detail} for c in invoice.checks]}
+        db.add(InvoiceRevision(invoice_id=invoice.id, snapshot_json=json.dumps(snapshot), correction_note=correction_note.strip()))
+        invoice.checks.clear()
+        invoice.invoice_number = invoice_number.strip()
+        invoice.document_hash = hashlib.sha256(invoice_bytes).hexdigest()
+        invoice.amount = 0
+        invoice.extracted_json = None
+        invoice.ai_summary = None
+        invoice.status = "SUBMITTED"
+        invoice.raw_file_path = None
+        invoice.evidence_path = None
+        audit.log(db, actor=f"vendor:{vendor.name}", action="invoice.corrected", campaign_id=campaign_id,
+                  invoice_id=invoice.id, detail=correction_note.strip(), commit=False)
+    else:
+        invoice = Invoice(
+            campaign_id=campaign_id,
+            budget_line_id=budget_line_id,
+            vendor_id=vendor_id,
+            invoice_number=invoice_number.strip()[:200],
+            document_hash=hashlib.sha256(invoice_bytes).hexdigest(),
+            amount=0.0,
+            currency=campaign.currency,
+            payout_email=vendor.payout_email,
+            raw_file_path=None,
+            evidence_path=None,
+            status="SUBMITTED",
+        )
+        db.add(invoice)
     db.commit()
     db.refresh(invoice)
     stored = StoredFile(invoice_id=invoice.id, kind="invoice", filename="invoice" + ext,
@@ -954,7 +1021,7 @@ async def submit_invoice(
     }
     existing_invoices = (
         db.query(Invoice)
-        .filter(Invoice.campaign_id == campaign_id, Invoice.id < invoice.id)
+        .filter(Invoice.campaign_id == campaign_id, Invoice.id != invoice.id)
         .all()
     )
     invoice_data["committed_amount"] = sum(
@@ -1199,6 +1266,8 @@ async def approve_invoice(
     if request is not None and (invoice.campaign.organizer_user_id == request.state.actor.id or invoice.vendor.user_id == request.state.actor.id):
         raise HTTPException(403, "A campaign participant cannot verify this invoice.")
     _guard_invoice_status(invoice, "AWAITING_VERIFIER")
+    if not payload.recipient_confirmed or not payload.confirmation_reference or len(payload.confirmation_reference.strip()) < 5:
+        raise HTTPException(422, "Record independent recipient confirmation and its method/reference before approval.")
     _recheck_approval(db, invoice)
 
     # Record verification decision
@@ -1206,7 +1275,7 @@ async def approve_invoice(
         invoice_id=invoice_id,
         verifier_name=request.state.actor.name if request is not None else payload.verifier_name,
         decision="approve",
-        note=payload.note,
+        note=f"Recipient confirmation: {payload.confirmation_reference.strip()}\n{payload.note or ''}",
     )
     db.add(verification)
     audit.log(
@@ -1255,6 +1324,9 @@ def reject_invoice(
     if request is not None and (invoice.campaign.organizer_user_id == request.state.actor.id or invoice.vendor.user_id == request.state.actor.id):
         raise HTTPException(403, "A campaign participant cannot verify this invoice.")
     _guard_invoice_status(invoice, "AWAITING_VERIFIER")
+
+    if not payload.note or len(payload.note.strip()) < 5:
+        raise HTTPException(422, "Explain why this claim is rejected (at least 5 characters).")
 
     verification = Verification(
         invoice_id=invoice_id,
@@ -1338,14 +1410,15 @@ def get_ledger(campaign_id: int, db: Session = Depends(get_db)):
     entries: list[LedgerEntry] = []
 
     # Donations (eager-load adjustments to avoid N+1 queries)
-    donations = db.query(Donation).options(selectinload(Donation.adjustments)).filter_by(campaign_id=campaign_id).all()
+    donations = db.query(Donation).options(selectinload(Donation.adjustments)).filter_by(campaign_id=campaign_id, status="captured").all()
     for d in donations:
         entries.append(
             LedgerEntry(
                 type="donation",
                 amount=d.amount,
-                actor_name=d.donor_name,
-                status=d.status,
+                actor_name=donor_alias(d),
+                public_reference=public_reference("d", campaign_id, d.id),
+                status="donated",
                 source=d.source,
                 created_at=d.created_at,
                 proof_url=None,
@@ -1368,9 +1441,10 @@ def get_ledger(campaign_id: int, db: Session = Depends(get_db)):
             else:
                 amount = -min(remaining_available, row.amount) if row.status in {"open", "buyer_favor"} else 0.0
                 remaining_available += amount
-            entries.append(LedgerEntry(type=row.kind, amount=amount, actor_name=donation.donor_name,
+            entries.append(LedgerEntry(type=row.kind, amount=amount, actor_name=donor_alias(donation),
+                public_reference=public_reference(row.kind, campaign_id, row.id),
                 status=row.status, source="paypal", created_at=row.updated_at or row.created_at,
-                proof_url=None, detail=row.detail, donation_id=donation.id))
+                proof_url=None, detail=f"{row.kind.title()} status: {row.status.replace('_', ' ')}", donation_id=donation.id))
 
     # One ledger entry per confirmed installment; include earlier single payouts.
     invoices = (
@@ -1395,14 +1469,16 @@ def get_ledger(campaign_id: int, db: Session = Depends(get_db)):
     for inv in invoices:
         proof_url = f"/{inv.evidence_path.lstrip(chr(47))}" if inv.evidence_path else None
         vendor = vendors_by_id.get(inv.vendor_id)
-        if inv.payout and inv.payout.status == "success":
+        if inv.payout and inv.payout.status == "success" and not (inv.payout.paypal_batch_id or "").startswith("SANDBOX-"):
             entries.append(LedgerEntry(type="payout", amount=inv.payout.amount,
                 actor_name=vendor.name if vendor else "Unknown Vendor", status="success",
+                public_reference=public_reference("p", campaign_id, f"legacy-{inv.payout.id}"),
                 created_at=inv.payout.created_at, proof_url=proof_url, invoice_id=inv.id))
         for part in inv.installments:
-            if part.status == "success":
+            if part.status == "success" and not (part.paypal_batch_id or "").startswith("SANDBOX-"):
                 entries.append(LedgerEntry(type="payout", amount=part.amount,
                     actor_name=vendor.name if vendor else "Unknown Vendor", status="success",
+                    public_reference=public_reference("p", campaign_id, part.id),
                     created_at=part.created_at, proof_url=proof_url, invoice_id=inv.id))
         if inv.delivery:
             closeout = inv.delivery
@@ -1492,15 +1568,16 @@ def campaign_report(campaign_id: int, request: Request, db: Session = Depends(ge
     writer = csv.writer(output)
     writer.writerow(["campaign_id", "campaign_title", "campaign_status", "cancellation_reason", "currency",
                      "goal_amount", "available_balance", "entry_date_utc", "entry_type", "actor", "amount",
-                     "status", "detail", "invoice_url", "delivery_proof_url"])
+                     "status", "detail", "invoice_url", "delivery_proof_url", "record_group", "public_reference", "payment_source"])
     for entry in entries:
         invoice = invoices.get(entry.invoice_id)
-        invoice_url = f"{base_url}/{invoice.raw_file_path.lstrip('/')}" if invoice and invoice.raw_file_path else ""
+        invoice_url = ""  # Raw invoices can contain private payout account details.
         proof_url = f"{base_url}{entry.proof_url}" if entry.proof_url else ""
         values = [campaign.id, campaign.title, campaign.status, campaign.cancellation_reason or "",
                   campaign.currency, campaign.goal_amount, campaign.pool_balance,
                   entry.created_at.isoformat() + "Z", entry.type, entry.actor_name,
-                  entry.amount, entry.status, entry.detail or "", invoice_url, proof_url]
+                  entry.amount, entry.status, entry.detail or "", invoice_url, proof_url,
+                  "financial" if entry.type in {"donation", "payout", "refund", "dispute"} else "fulfillment", entry.public_reference or "", entry.source or ("paypal" if entry.type == "payout" else "")]
         writer.writerow([_csv_cell(value) for value in values])
     return Response(content="\ufeff" + output.getvalue(), media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="campaign-{campaign_id}-report.csv"',
@@ -1555,6 +1632,142 @@ async def paypal_webhook(request: Request, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 # Mount routes under both root / and /api prefix
 # ---------------------------------------------------------------------------
+
+def _independent_reviewer(invoice, request):
+    if invoice.campaign.organizer_user_id == request.state.actor.id or invoice.vendor.user_id == request.state.actor.id:
+        raise HTTPException(403, "A campaign participant cannot review this invoice.")
+
+
+def _review_decision(db, invoice_id, payload, request, decision, target, allowed):
+    invoice = _locked_invoice(db, invoice_id)
+    _independent_reviewer(invoice, request)
+    if invoice.status not in allowed:
+        raise HTTPException(409, "This decision is not allowed in the current review state.")
+    invoice.status = target
+    db.add(Verification(invoice_id=invoice.id, verifier_name=request.state.actor.name,
+                        decision=decision, note=payload.note))
+    audit.log(db, actor=f"verifier:{request.state.actor.name}", action=f"invoice.{decision}",
+              campaign_id=invoice.campaign_id, invoice_id=invoice.id, detail=payload.note, commit=False)
+    db.commit()
+    db.refresh(invoice)
+    return _invoice_to_detail(invoice)
+
+
+@router.post("/invoices/{invoice_id}/request-evidence", response_model=InvoiceDetail, dependencies=[Depends(require_verifier)])
+def request_evidence(invoice_id: int, payload: ReviewNote, request: Request, db: Session = Depends(get_db)):
+    return _review_decision(db, invoice_id, payload, request, "request_evidence", "MORE_EVIDENCE_REQUIRED", {"AWAITING_VERIFIER", "ESCALATED"})
+
+
+@router.post("/invoices/{invoice_id}/escalate", response_model=InvoiceDetail, dependencies=[Depends(require_verifier)])
+def escalate_invoice(invoice_id: int, payload: ReviewNote, request: Request, db: Session = Depends(get_db)):
+    return _review_decision(db, invoice_id, payload, request, "escalate", "ESCALATED", {"AWAITING_VERIFIER"})
+
+
+@router.post("/invoices/{invoice_id}/reopen", response_model=InvoiceDetail, dependencies=[Depends(require_verifier)])
+def reopen_escalation(invoice_id: int, payload: ReviewNote, request: Request, db: Session = Depends(get_db)):
+    return _review_decision(db, invoice_id, payload, request, "reopen", "AWAITING_VERIFIER", {"ESCALATED"})
+
+
+def _amendment_out(row):
+    return {"id": row.id, "campaign_id": row.campaign_id, "proposed": json.loads(row.proposed_json),
+            "previous": json.loads(row.previous_json) if row.previous_json else None,
+            "reason": row.reason, "status": row.status, "reviewer_name": row.reviewer_name,
+            "review_note": row.review_note, "created_at": row.created_at.isoformat(),
+            "reviewed_at": row.reviewed_at.isoformat() if row.reviewed_at else None}
+
+
+@router.get("/campaigns/{campaign_id}/amendments")
+def list_amendments(campaign_id: int, db: Session = Depends(get_db)):
+    _get_or_404(db, Campaign, campaign_id)
+    return [_amendment_out(a) for a in db.query(CampaignAmendment).filter_by(campaign_id=campaign_id).order_by(CampaignAmendment.id).all()]
+
+
+@router.post("/campaigns/{campaign_id}/amendments", status_code=201, dependencies=[Depends(require_organizer)])
+def propose_amendment(campaign_id: int, payload: AmendmentCreate, request: Request, db: Session = Depends(get_db)):
+    campaign = db.query(Campaign).filter_by(id=campaign_id).with_for_update().one_or_none()
+    if campaign is None or campaign.organizer_user_id != request.state.actor.id:
+        raise HTTPException(404, "Campaign not found in your organizer workspace.")
+    if campaign.status != "active":
+        raise HTTPException(409, "Only active campaigns can be amended.")
+    if db.query(CampaignAmendment).filter_by(campaign_id=campaign_id, status="pending").first():
+        raise HTTPException(409, "A campaign amendment is already awaiting review.")
+    proposed = payload.model_dump(exclude_none=True, exclude={"note"})
+    if not payload.vendor_assignments:
+        proposed.pop("vendor_assignments", None)
+    if not proposed:
+        raise HTTPException(422, "Specify at least one proposed change.")
+    row = CampaignAmendment(campaign_id=campaign_id, proposed_json=json.dumps(proposed), reason=payload.note)
+    db.add(row)
+    audit.log(db, actor=request.state.actor.name, action="campaign.amendment_requested", campaign_id=campaign_id, detail=payload.note, commit=False)
+    db.commit()
+    return _amendment_out(row)
+
+
+@router.post("/amendments/{amendment_id}/{decision}", dependencies=[Depends(require_verifier)])
+def decide_amendment(amendment_id: int, decision: str, payload: ReviewNote, request: Request, db: Session = Depends(get_db)):
+    initial = _get_or_404(db, CampaignAmendment, amendment_id)
+    campaign = db.query(Campaign).filter_by(id=initial.campaign_id).with_for_update().populate_existing().one()
+    row = db.query(CampaignAmendment).filter_by(id=amendment_id).with_for_update().populate_existing().one()
+    if decision not in {"approve", "reject"}:
+        raise HTTPException(422, "Choose approve or reject.")
+    if campaign.organizer_user_id == request.state.actor.id or db.query(Vendor).filter_by(campaign_id=campaign.id, user_id=request.state.actor.id).first():
+        raise HTTPException(403, "A participant cannot approve campaign amendments.")
+    if row.status != "pending" or campaign.status != "active":
+        raise HTTPException(409, "This amendment is no longer open for review.")
+    if decision == "approve":
+        proposed = json.loads(row.proposed_json)
+        previous = {key: getattr(campaign, key) for key in ("goal_amount", "beneficiary", "expected_deliverables")}
+        previous["vendor_assignments"] = {str(line.id): line.vendor_id for line in campaign.budget_lines}
+        if "goal_amount" in proposed and proposed["goal_amount"] < _campaign_funding(db, campaign)["raised"] + _campaign_funding(db, campaign)["reserved"]:
+            raise HTTPException(409, "The target cannot be lower than funding already received or being processed.")
+        for line_id, vendor_id in proposed.get("vendor_assignments", {}).items():
+            line = db.get(BudgetLine, int(line_id))
+            vendor = db.get(Vendor, vendor_id)
+            if not line or not vendor or line.campaign_id != campaign.id or vendor.campaign_id != campaign.id:
+                raise HTTPException(422, "Assignments must use a line and vendor in this campaign.")
+            if db.query(Invoice).filter_by(budget_line_id=line.id).first():
+                raise HTTPException(409, "Cannot reassign a budget line after invoice submissions. Resolve its claims first.")
+            line.vendor_id = vendor.id
+        for key in ("goal_amount", "beneficiary", "expected_deliverables"):
+            if key in proposed:
+                setattr(campaign, key, proposed[key])
+        row.previous_json = json.dumps(previous)
+    row.status = "approved" if decision == "approve" else "rejected"
+    row.reviewer_name = request.state.actor.name
+    row.review_note = payload.note
+    row.reviewed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    audit.log(db, actor=request.state.actor.name, action=f"campaign.amendment_{row.status}", campaign_id=campaign.id,
+              detail={"amendment_id": row.id, "reason": payload.note}, commit=False)
+    db.commit()
+    return _amendment_out(row)
+
+
+@router.get("/campaigns/{campaign_id}/progress")
+def campaign_progress(campaign_id: int, db: Session = Depends(get_db)):
+    campaign = _get_or_404(db, Campaign, campaign_id)
+    funding = _campaign_funding(db, campaign)
+    ledger = get_ledger(campaign_id, db)
+    claims = []
+    for inv in db.query(Invoice).filter_by(campaign_id=campaign_id).order_by(Invoice.id).all():
+        decisions = list(inv.verifications)
+        approval = next((v for v in reversed(decisions) if v.decision == "approve"), None)
+        paid = round(sum(e.amount for e in ledger if e.type == "payout" and e.invoice_id == inv.id), 2)
+        simulated = simulated_payout(inv)
+        approved = bool(approval) and inv.status not in {"REJECTED", "VERIFIER_REJECTED", "ESCALATED", "MORE_EVIDENCE_REQUIRED"}
+        claims.append({"reference": public_reference("claim", campaign_id, inv.id),
+            "budget_line": inv.budget_line.name, "vendor": inv.vendor.name,
+            "amount": inv.amount, "currency": inv.currency,
+            "evidence_submitted": bool(inv.raw_file_path and inv.evidence_path),
+            "submitted_at": inv.created_at.isoformat(), "review_status": inv.status,
+            "approved": approved, "approved_at": approval.timestamp.isoformat() if approved else None,
+            "confirmed_paid": paid, "vendor_paid": inv.amount > 0 and paid >= inv.amount - 0.005,
+            "payment_mode": "simulated" if simulated and paid == 0 else "paypal",
+            "payment_status": "simulated" if simulated and paid == 0 else "confirmed" if inv.amount > 0 and paid >= inv.amount - 0.005 else "partially_paid" if paid > 0 else "failed" if inv.status == "FAILED" else "pending" if inv.status == "PAYOUT_PENDING" else "not_paid"})
+    return {"campaign_id": campaign.id, "payment_model": "payment_after_delivery", "goal": campaign.goal_amount,
+            "funded": funding["raised"] >= campaign.goal_amount - 0.005, "raised": funding["raised"],
+            "currency": campaign.currency, "claims": claims}
+
+
 app.include_router(router)
 app.include_router(router, prefix="/api")
 app.include_router(auth_router)
